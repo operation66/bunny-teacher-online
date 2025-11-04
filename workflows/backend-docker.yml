@@ -1,0 +1,46 @@
+name: Backend Docker Build & Smoke Test
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'Dockerfile'
+      - '.github/workflows/backend-docker.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'Dockerfile'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend Docker image
+        run: docker build -t bunny-teacher-backend .
+
+      - name: Run container (smoke)
+        run: |
+          docker run -d \
+            -p 8000:8000 \
+            -e PORT=8000 \
+            -e DATABASE_URL=sqlite:///./backend/elkheta_dashboard.db \
+            -e BUNNY_STREAM_API_KEY=dummy \
+            --name backend-smoke bunny-teacher-backend
+          # Wait for app to start
+          for i in {1..20}; do \
+            curl -sf http://localhost:8000/ && break || sleep 1; \
+          done
+          curl -sS http://localhost:8000/ | tee /tmp/health.json
+          docker logs backend-smoke | tail -n 200 || true
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f backend-smoke || true
