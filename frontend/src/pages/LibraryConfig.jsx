@@ -29,7 +29,6 @@ const LibraryConfig = () => {
   const [showApiKeys, setShowApiKeys] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [pendingChanges, setPendingChanges] = useState({});
-  // UI-only states for new visuals
   const [expandedId, setExpandedId] = useState(null);
   const [activeOnly, setActiveOnly] = useState(false);
   const [typeFilter, setTypeFilter] = useState('All Configs');
@@ -53,13 +52,11 @@ const LibraryConfig = () => {
   }, []);
 
   useEffect(() => {
-    // Filter configs based on search term and Active Only checkbox
     let filtered = configs.filter(config => 
       config.library_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       config.library_id.toString().includes(searchTerm)
     );
     if (activeOnly) {
-      // Active means API key is present
       filtered = filtered.filter(cfg => !!(cfg.stream_api_key && String(cfg.stream_api_key).trim().length > 0));
     }
     setFilteredConfigs(filtered);
@@ -72,21 +69,19 @@ const LibraryConfig = () => {
     try {
       // First, ensure configs are synced with live Bunny libraries
       try {
-        const syncResp = await fetch('/api/library-configs/sync-from-bunny/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' }
-        });
-        if (syncResp.ok) {
-          const syncData = await syncResp.json();
-          // Show a concise sync summary without blocking the fetch
+        const { data: syncData } = await api.post('/library-configs/sync-from-bunny/');
+        if (syncData) {
           setMessage({
             type: 'success',
-            text: `Sync done: created ${syncData.created || 0}, updated ${syncData.updated || 0}`
+            text: `Sync complete: created ${syncData.created}, updated ${syncData.updated}`
           });
         }
       } catch (syncErr) {
-        // Do not block loading configs if sync fails; just log and proceed
-        console.warn('Sync from Bunny failed, proceeding to load existing configs:', syncErr);
+        console.warn('Sync failed:', syncErr);
+        setMessage({
+          type: 'error',
+          text: 'Failed to sync with Bunny.net libraries'
+        });
       }
 
       // Get authoritative list of live Bunny libraries
@@ -95,38 +90,31 @@ const LibraryConfig = () => {
         const { data: liveData } = await api.get('/bunny-libraries/');
         liveIds = (Array.isArray(liveData) ? liveData : []).map(l => l.id ?? l.library_id).filter(id => id != null);
       } catch (liveErr) {
-        console.warn('Failed to fetch live Bunny libraries; falling back to existing configs only:', liveErr);
+        console.warn('Failed to fetch live Bunny libraries:', liveErr);
       }
 
+      // Then fetch all configs
       const { data } = await api.get('/library-configs/');
       const filtered = liveIds.length > 0
         ? data.filter(cfg => liveIds.includes(cfg.library_id))
         : data;
+
       setConfigs(filtered);
       setMessage({ 
         type: 'success', 
         text: `Loaded ${filtered.length} library configurations` 
       });
 
-      // Notify other pages that library configs were refreshed
-      try {
-        const event = new CustomEvent('library-configs:updated', { detail: { count: filtered.length } });
-        window.dispatchEvent(event);
-      } catch (e) {
-        // noop
-      }
     } catch (error) {
       console.error('Error fetching configs:', error);
-      setMessage({ 
-        type: 'error', 
-        text: `Failed to fetch configurations: ${error.message}` 
+      setMessage({
+        type: 'error',
+        text: `Failed to load configurations: ${error.response?.data?.detail || error.message}`
       });
     } finally {
       setLoading(false);
     }
   };
-
-  // Sync from Bunny removed; use Refresh to fetch configs
 
   const saveConfig = async (libraryId) => {
     const changes = pendingChanges[libraryId];
@@ -135,21 +123,8 @@ const LibraryConfig = () => {
     setSaving(prev => ({ ...prev, [libraryId]: true }));
     
     try {
-    const response = await fetch(`/api/library-configs/${libraryId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(changes)
-      });
+      const { data: updatedConfig } = await api.put(`/library-configs/${libraryId}`, changes);
       
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const updatedConfig = await response.json();
-      
-      // Update the config in state
       setConfigs(prev => prev.map(config => 
         config.library_id === libraryId ? updatedConfig : config
       ));
@@ -166,18 +141,11 @@ const LibraryConfig = () => {
         text: `Successfully saved configuration for library ${libraryId}` 
       });
 
-      // Notify other pages that a config was saved (updates may affect names/keys)
-      try {
-        const event = new CustomEvent('library-configs:updated', { detail: { savedLibraryId: libraryId } });
-        window.dispatchEvent(event);
-      } catch (e) {
-        // noop
-      }
     } catch (error) {
       console.error('Error saving config:', error);
       setMessage({ 
         type: 'error', 
-        text: `Failed to save configuration: ${error.message}` 
+        text: `Failed to save configuration: ${error.response?.data?.detail || error.message}` 
       });
     } finally {
       setSaving(prev => ({ ...prev, [libraryId]: false }));
@@ -185,14 +153,12 @@ const LibraryConfig = () => {
   };
 
   const handleFieldChange = (libraryId, field, value) => {
-    // Update local state immediately
     setConfigs(prev => prev.map(config => 
       config.library_id === libraryId 
         ? { ...config, [field]: value }
         : config
     ));
     
-    // Track pending changes
     setPendingChanges(prev => ({
       ...prev,
       [libraryId]: {
@@ -217,14 +183,13 @@ const LibraryConfig = () => {
     return pendingChanges[libraryId] && Object.keys(pendingChanges[libraryId]).length > 0;
   };
 
-  // Derived header stats
   const totalConfigs = configs.length;
-  // Active APIs counted by presence of an API key
   const activeCount = configs.filter(c => !!(c.stream_api_key && String(c.stream_api_key).trim().length > 0)).length;
   const latestUpdate = configs.reduce((acc, c) => {
     const t = c.updated_at ? new Date(c.updated_at).getTime() : 0;
     return t > acc ? t : acc;
   }, 0);
+
   const formatTimeAgo = (dateInput) => {
     if (!dateInput) return '—';
     const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
@@ -240,7 +205,6 @@ const LibraryConfig = () => {
 
   const endpointFor = (cfg) => `https://video.bunnycdn.com/library/${cfg.library_id}/videos`;
   const isConfigured = (cfg) => !!(cfg.stream_api_key && String(cfg.stream_api_key).trim().length > 0);
-  // Status reflects API key presence (Active = API added), not backend is_active
   const statusFor = (cfg) => (hasPendingChanges(cfg.library_id) ? 'Pending' : (isConfigured(cfg) ? 'Active' : 'Inactive'));
   const statusStyles = (st) => {
     switch (st) {
@@ -259,7 +223,7 @@ const LibraryConfig = () => {
       return next;
     });
   };
-
+  
   return (
     <div className="container mx-auto p-6 max-w-7xl">
       {/* Page Header */}
