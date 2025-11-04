@@ -322,54 +322,83 @@ const BunnyLibraries = () => {
     setLibraryStats(prev => ({ ...prev, ...statsMap }));
   }, [libraries, selectedMonth, selectedYear]);
 
-  const fetchLibraryStats = async () => {
-    if (selectedLibraries.size === 0) {
-      showMessage('Please select at least one library', 'error');
-      return;
-    }
+const fetchLibraryStats = async () => {
+  if (selectedLibraries.size === 0) {
+    showMessage('Please select at least one library', 'error');
+    return;
+  }
 
-    // Initialize status popup
-    setShowStatusPopup(true);
-    setFetchStatus({
-      isLoading: true,
-      completed: [],
-      failed: [],
-      total: selectedLibraries.size,
-      currentLibrary: null
-    });
-    setSyncStatus({
-      isLoading: false,
-      completed: [],
-      failed: [],
-      total: 0
-    });
+  // Initialize status popup
+  setShowStatusPopup(true);
+  setFetchStatus({
+    isLoading: true,
+    completed: [],
+    failed: [],
+    total: selectedLibraries.size,
+    currentLibrary: null
+  });
+  setSyncStatus({
+    isLoading: false,
+    completed: [],
+    failed: [],
+    total: 0
+  });
 
-    try {
-      const libraryIds = Array.from(selectedLibraries);
-      
-    const response = await fetch('/api/historical-stats/batch-fetch/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          library_ids: libraryIds,
-          month: selectedMonth,
-          year: selectedYear
-        })
+  let configMap = new Map();
+
+  try {
+    // Get library configurations to check API keys
+    const { data: configs } = await api.get('/library-configs/');
+    configMap = new Map(configs.map(cfg => [cfg.library_id, cfg]));
+  } catch (configError) {
+    console.error('Error fetching library configurations:', configError);
+    showMessage('Failed to check API configurations', 'error');
+    setFetchStatus(prev => ({
+      ...prev,
+      isLoading: false
+    }));
+    return;
+  }
+
+  const libraryIds = Array.from(selectedLibraries);
+  const validLibraries = [];
+  const unconfiguredLibraries = [];
+
+  // Check which libraries have API keys configured
+  libraryIds.forEach(id => {
+    const config = configMap.get(id);
+    if (config && config.stream_api_key) {
+      validLibraries.push(id);
+    } else {
+      unconfiguredLibraries.push({
+        library_id: id,
+        library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
+        error: 'No API key configured. Please add API key in API Config page.'
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch library statistics');
-      }
-      
-      const data = await response.json();
+    }
+  });
 
-      // Separate successes and failures for clear status and UI updates
+  // Update status for unconfigured libraries
+  if (unconfiguredLibraries.length > 0) {
+    setFetchStatus(prev => ({
+      ...prev,
+      failed: [...prev.failed, ...unconfiguredLibraries]
+    }));
+  }
+
+  // Only proceed with libraries that have API keys
+  if (validLibraries.length > 0) {
+    try {
+      const { data } = await api.post('/historical-stats/batch-fetch/', {
+        library_ids: validLibraries,
+        month: selectedMonth,
+        year: selectedYear
+      });
+
       const successes = (data.results || []).filter(r => r.success);
       const failures = (data.results || []).filter(r => !r.success);
 
-      // Update table stats immediately for successful fetches
+      // Update table stats for successful fetches
       setLibraryStats(prev => {
         const updated = { ...prev };
         successes.forEach(r => {
@@ -379,52 +408,63 @@ const BunnyLibraries = () => {
             total_watch_time_seconds: d.total_watch_time_seconds ?? 0,
             month: d.month ?? selectedMonth,
             year: d.year ?? selectedYear,
-            last_updated: d.fetch_date ?? null,
+            last_updated: d.fetch_date ?? new Date().toISOString(),
           };
         });
         return updated;
       });
 
-      // Reflect precise fetch results in the status popup
+      // Update fetch status
       setFetchStatus(prev => ({
         ...prev,
-        isLoading: false,
         completed: successes.map(r => ({
           library_id: r.library_id,
           library_name: r.library_name,
-          message: r.message,
+          message: r.message || 'Successfully fetched statistics',
         })),
-        failed: failures.map(r => ({
-          library_id: r.library_id,
-          library_name: r.library_name,
-          error: r.error,
-        })),
+        failed: [
+          ...prev.failed,
+          ...failures.map(r => ({
+            library_id: r.library_id,
+            library_name: r.library_name,
+            error: r.error || 'Failed to fetch statistics',
+          }))
+        ]
       }));
 
-      // Show a concise page-level message summarizing the update
+      // Show summary message
       const successCount = successes.length;
-      const failCount = failures.length;
-      if (successCount > 0 || failCount > 0) {
-        showMessage(
-          `Updated stats for ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}. Table refreshed.`,
-          failCount > 0 ? 'error' : 'success'
-        );
-      }
+      const failCount = failures.length + unconfiguredLibraries.length;
+      const unconfiguredMsg = unconfiguredLibraries.length > 0 
+        ? ` (${unconfiguredLibraries.length} libraries need API keys)` 
+        : '';
       
-    } catch (error) {
-      console.error('Error fetching library stats:', error);
+      showMessage(
+        `Updated stats for ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}${unconfiguredMsg}`,
+        failCount > 0 ? 'error' : 'success'
+      );
+    } catch (fetchError) {
+      console.error('Error fetching library stats:', fetchError);
       setFetchStatus(prev => ({
         ...prev,
-        isLoading: false,
-        failed: Array.from(selectedLibraries).map(id => ({
-          library_id: id,
-          library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
-          error: error.message
-        }))
+        failed: [
+          ...prev.failed,
+          ...validLibraries.map(id => ({
+            library_id: id,
+            library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
+            error: fetchError.response?.data?.detail || fetchError.message || 'Failed to fetch statistics'
+          }))
+        ]
       }));
+      showMessage('Failed to fetch library statistics', 'error');
     }
-  };
+  } else if (unconfiguredLibraries.length > 0) {
+    showMessage('No libraries have API keys configured. Please configure API keys in API Config page.', 'error');
+  }
 
+  setFetchStatus(prev => ({ ...prev, isLoading: false }));
+};
+  
   const syncToLibrariesPage = async () => {
     const successfulFetches = fetchStatus.completed;
     if (successfulFetches.length === 0) {
@@ -1235,3 +1275,4 @@ const BunnyLibraries = () => {
 
 
 export default BunnyLibraries;
+
