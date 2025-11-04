@@ -12,17 +12,21 @@
   ],
   "routes": [
     {
-      "src": "/assets/(.*)",
-      "dest": "frontend/dist/assets/$1"
+      "src": "^/assets/(.*)",
+      "dest": "/frontend/dist/assets/$1",
+      "headers": {
+        "Cache-Control": "public, max-age=31536000, immutable"
+      }
     },
     {
-      "src": "/index.html",
-      "dest": "frontend/dist/index.html"
+      "handle": "filesystem"
     },
     {
       "src": "/(.*)",
-      "headers": { "Cache-Control": "max-age=0" },
-      "dest": "frontend/dist/index.html"
+      "dest": "/frontend/dist/index.html",
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      }
     }
   ]
 }
