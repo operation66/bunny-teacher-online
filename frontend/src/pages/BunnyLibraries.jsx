@@ -212,95 +212,94 @@ const BunnyLibraries = () => {
     localStorage.removeItem(CACHE_EXPIRY_KEY);
   };
 
-  const fetchLibraries = async (forceRefresh = false) => {
-    // If not forcing refresh, try to load from cache first
-    if (!forceRefresh && loadLibrariesFromCache()) {
-      return;
+ const fetchLibraries = async (forceRefresh = false) => {
+  // If not forcing refresh, try to load from cache first
+  if (!forceRefresh && loadLibrariesFromCache()) {
+    return;
+  }
+
+  setLoading(true);
+  try {
+    // Primary: get all libraries directly from Bunny API
+    const { data: baseData } = await api.get('/bunny-libraries/');
+    const normalizedBase = (Array.isArray(baseData) ? baseData : []).map((lib) => ({
+      id: lib.id ?? lib.library_id,
+      name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
+      monthly_data: [],
+      last_updated: null,
+    }));
+    const uniqueBase = Array.from(new Map(normalizedBase.map(l => [l.id, l])).values());
+    setLibraries(uniqueBase);
+
+    // Save to cache immediately so UI isn't blocked
+    saveLibrariesToCache(uniqueBase);
+    showMessage(`Loaded ${uniqueBase.length} libraries from Bunny.net`);
+
+    // Secondary: merge any synced monthly stats for the selected period
+    try {
+      const { data: histData } = await api.get('/historical-stats/libraries/?with_stats_only=true');
+      const statsMap = {};
+      (Array.isArray(histData) ? histData : []).forEach((lib) => {
+        const libId = lib.id ?? lib.library_id;
+        const md = (lib.monthly_data || []).find(
+          (d) => d.month === selectedMonth && d.year === selectedYear
+        );
+        if (md && libId != null) {
+          statsMap[libId] = {
+            views: md.total_views ?? 0,
+            total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
+            month: md.month,
+            year: md.year,
+            last_updated: lib.last_updated ?? null,
+          };
+        }
+      });
+      // Merge synced stats without overwriting freshly fetched values
+      setLibraryStats(prev => ({ ...prev, ...statsMap }));
+    } catch (innerErr) {
+      console.warn('Unable to load synced historical stats:', innerErr);
     }
 
-    setLoading(true);
+  } catch (error) {
+    console.error('Error fetching libraries:', error);
+    // Fallback: try historical stats endpoint to at least get synced libraries
     try {
-      // Primary: get all libraries directly from Bunny API
-      const { data: baseData } = await api.get('/bunny-libraries/');
-      const normalizedBase = (Array.isArray(baseData) ? baseData : []).map((lib) => ({
+      const { data } = await api.get('/historical-stats/libraries/?with_stats_only=true');
+      const normalized = (Array.isArray(data) ? data : []).map((lib) => ({
         id: lib.id ?? lib.library_id,
         name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
-        monthly_data: [],
-        last_updated: null,
+        monthly_data: lib.monthly_data ?? [],
+        last_updated: lib.last_updated ?? null,
       }));
-      const uniqueBase = Array.from(new Map(normalizedBase.map(l => [l.id, l])).values());
-      setLibraries(uniqueBase);
+      const uniqueById = Array.from(new Map(normalized.map(l => [l.id, l])).values());
+      setLibraries(uniqueById);
 
-      // Save to cache immediately so UI isn't blocked
-      saveLibrariesToCache(uniqueBase);
-      showMessage(`Loaded ${uniqueBase.length} libraries from Bunny.net`);
-
-      // Secondary: merge any synced monthly stats for the selected period
-      try {
-        const { data: histData } = await api.get('/historical-stats/libraries/?with_stats_only=true');
-          const statsMap = {};
-          (Array.isArray(histData) ? histData : []).forEach((lib) => {
-            const libId = lib.id ?? lib.library_id;
-            const md = (lib.monthly_data || []).find(
-              (d) => d.month === selectedMonth && d.year === selectedYear
-            );
-            if (md && libId != null) {
-              statsMap[libId] = {
-                views: md.total_views ?? 0,
-                total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
-                month: md.month,
-                year: md.year,
-                last_updated: lib.last_updated ?? null,
-              };
-            }
-          });
-          // Merge synced stats without overwriting freshly fetched values
-          setLibraryStats(prev => ({ ...prev, ...statsMap }));
+      const statsMap = {};
+      normalized.forEach((lib) => {
+        const md = (lib.monthly_data || []).find(
+          (d) => d.month === selectedMonth && d.year === selectedYear
+        );
+        if (md) {
+          statsMap[lib.id] = {
+            views: md.total_views ?? 0,
+            total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
+            month: md.month,
+            year: md.year,
+            last_updated: lib.last_updated,
+          };
         }
-      } catch (innerErr) {
-        console.warn('Unable to load synced historical stats:', innerErr);
-      }
-    } catch (error) {
-      console.error('Error fetching libraries:', error);
-      // Fallback: try historical stats endpoint to at least get synced libraries
-      try {
-        const { data } = await api.get('/historical-stats/libraries/?with_stats_only=true');
-        const normalized = (Array.isArray(data) ? data : []).map((lib) => ({
-          id: lib.id ?? lib.library_id,
-          name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
-          monthly_data: lib.monthly_data ?? [],
-          last_updated: lib.last_updated ?? null,
-        }));
-        const uniqueById = Array.from(new Map(normalized.map(l => [l.id, l])).values());
-        setLibraries(uniqueById);
-
-        const statsMap = {};
-        normalized.forEach((lib) => {
-          const md = (lib.monthly_data || []).find(
-            (d) => d.month === selectedMonth && d.year === selectedYear
-          );
-          if (md) {
-            statsMap[lib.id] = {
-              views: md.total_views ?? 0,
-              total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
-              month: md.month,
-              year: md.year,
-              last_updated: lib.last_updated,
-            };
-          }
-        });
-        setLibraryStats(statsMap);
-
-        saveLibrariesToCache(uniqueById);
-        showMessage(`Fetched ${uniqueById.length} synced libraries from history`);
-      } catch (fallbackErr) {
-        console.error('Fallback error fetching libraries:', fallbackErr);
-        showMessage('Failed to fetch libraries', 'error');
-      }
-    } finally {
-      setLoading(false);
+      });
+      setLibraryStats(statsMap);
+      saveLibrariesToCache(uniqueById);
+      showMessage(`Fetched ${uniqueById.length} synced libraries from history`);
+    } catch (fallbackErr) {
+      console.error('Fallback error fetching libraries:', fallbackErr);
+      showMessage('Failed to fetch libraries', 'error');
     }
-  };
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Recompute stats when libraries or selected period changes
   useEffect(() => {
@@ -1233,5 +1232,6 @@ const BunnyLibraries = () => {
     </div>
   );
 };
+
 
 export default BunnyLibraries;
