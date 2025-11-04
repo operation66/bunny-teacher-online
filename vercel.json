@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "buildCommand": "npm run build",
+        "distDir": "frontend/dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/assets/(.*)",
+      "dest": "frontend/dist/assets/$1"
+    },
+    {
+      "src": "/index.html",
+      "dest": "frontend/dist/index.html"
+    },
+    {
+      "src": "/(.*)",
+      "headers": { "Cache-Control": "max-age=0" },
+      "dest": "frontend/dist/index.html"
+    }
+  ]
+}
