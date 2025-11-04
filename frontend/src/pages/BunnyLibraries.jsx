@@ -256,10 +256,9 @@ const BunnyLibraries = () => {
           });
           // Merge synced stats without overwriting freshly fetched values
           setLibraryStats(prev => ({ ...prev, ...statsMap }));
-        }
-      } catch (innerErr) {
-        console.warn('Unable to load synced historical stats:', innerErr);
-      }
+  } catch (innerErr) {
+    console.warn('Unable to load synced historical stats:', innerErr);
+  }
     } catch (error) {
       console.error('Error fetching libraries:', error);
       // Fallback: try historical stats endpoint to at least get synced libraries
@@ -1233,5 +1232,6 @@ const BunnyLibraries = () => {
     </div>
   );
 };
+
 
 export default BunnyLibraries;
