@@ -322,98 +322,27 @@ const BunnyLibraries = () => {
     setLibraryStats(prev => ({ ...prev, ...statsMap }));
   }, [libraries, selectedMonth, selectedYear]);
 
- const fetchLibraryStats = async () => {
-  if (selectedLibraries.size === 0) {
-    showMessage('Please select at least one library', 'error');
-    return;
-  }
-
-  // Initialize status popup
-  setShowStatusPopup(true);
-  setFetchStatus({
-    isLoading: true,
-    completed: [],
-    failed: [],
-    total: selectedLibraries.size,
-    currentLibrary: null
-  });
-  setSyncStatus({
-    isLoading: false,
-    completed: [],
-    failed: [],
-    total: 0
-  });
-
-  try {
-    const libraryIds = Array.from(selectedLibraries);
-    
-    // Use the configured api instance instead of fetch
-    const { data } = await api.post('/historical-stats/batch-fetch/', {
-      library_ids: libraryIds,
-      month: selectedMonth,
-      year: selectedYear
-    });
-
-    // Separate successes and failures
-    const successes = (data.results || []).filter(r => r.success);
-    const failures = (data.results || []).filter(r => !r.success);
-
-    // Update table stats immediately for successful fetches
-    setLibraryStats(prev => {
-      const updated = { ...prev };
-      successes.forEach(r => {
-        const d = r.data || {};
-        updated[r.library_id] = {
-          views: d.total_views ?? 0,
-          total_watch_time_seconds: d.total_watch_time_seconds ?? 0,
-          month: d.month ?? selectedMonth,
-          year: d.year ?? selectedYear,
-          last_updated: d.fetch_date ?? new Date().toISOString(),
-        };
-      });
-      return updated;
-    });
-
-    // Update fetch status
-    setFetchStatus(prev => ({
-      ...prev,
-      isLoading: false,
-      completed: successes.map(r => ({
-        library_id: r.library_id,
-        library_name: r.library_name,
-        message: r.message || 'Successfully fetched statistics',
-      })),
-      failed: failures.map(r => ({
-        library_id: r.library_id,
-        library_name: r.library_name,
-        error: r.error || 'Failed to fetch statistics',
-      })),
-    }));
-
-    // Show summary message
-    const successCount = successes.length;
-    const failCount = failures.length;
-    if (successCount > 0 || failCount > 0) {
-      showMessage(
-        `Updated stats for ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}. Table refreshed.`,
-        failCount > 0 ? 'error' : 'success'
-      );
+  const fetchLibraryStats = async () => {
+    if (selectedLibraries.size === 0) {
+      showMessage('Please select at least one library', 'error');
+      return;
     }
-    
-  } catch (error) {
-    console.error('Error fetching library stats:', error);
-    setFetchStatus(prev => ({
-      ...prev,
+
+    // Initialize status popup
+    setShowStatusPopup(true);
+    setFetchStatus({
+      isLoading: true,
+      completed: [],
+      failed: [],
+      total: selectedLibraries.size,
+      currentLibrary: null
+    });
+    setSyncStatus({
       isLoading: false,
-      failed: Array.from(selectedLibraries).map(id => ({
-        library_id: id,
-        library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
-        error: error.response?.data?.detail || error.message || 'Failed to fetch statistics'
-      }))
-    }));
-    showMessage('Failed to fetch library statistics', 'error');
-  }
-};
+      completed: [],
+      failed: [],
+      total: 0
+    });
 
     try {
       const libraryIds = Array.from(selectedLibraries);
@@ -1306,4 +1235,3 @@ const BunnyLibraries = () => {
 
 
 export default BunnyLibraries;
-
