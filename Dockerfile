@@ -26,4 +26,4 @@ EXPOSE 8000
 
 # Use uvicorn to serve FastAPI (Render will set PORT at runtime)
 WORKDIR /app/backend
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
