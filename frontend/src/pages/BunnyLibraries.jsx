@@ -465,86 +465,76 @@ const fetchLibraryStats = async () => {
   setFetchStatus(prev => ({ ...prev, isLoading: false }));
 };
   
-  const syncToLibrariesPage = async () => {
-    const successfulFetches = fetchStatus.completed;
-    if (successfulFetches.length === 0) {
-      showMessage('No successful fetches to sync', 'error');
-      return;
-    }
+const syncToLibrariesPage = async () => {
+  const successfulFetches = fetchStatus.completed;
+  if (successfulFetches.length === 0) {
+    showMessage('No successful fetches to sync', 'error');
+    return;
+  }
 
-    setSyncStatus({
-      isLoading: true,
-      completed: [],
-      failed: [],
-      total: successfulFetches.length
+  setSyncStatus({
+    isLoading: true,
+    completed: [],
+    failed: [],
+    total: successfulFetches.length
+  });
+
+  let syncData;
+  try {
+    const { data } = await api.post('/historical-stats/sync/', {
+      library_ids: successfulFetches.map(lib => lib.library_id),
+      month: selectedMonth,
+      year: selectedYear
     });
+    syncData = data;
+  } catch (error) {
+    console.error('Error syncing to Libraries page:', error);
+    setSyncStatus(prev => ({
+      ...prev,
+      isLoading: false,
+      failed: successfulFetches.map(lib => ({
+        library_id: lib.library_id,
+        library_name: lib.library_name,
+        error: error.response?.data?.detail || error.message || 'Failed to sync to Libraries page'
+      }))
+    }));
+    showMessage('Failed to sync to Libraries page', 'error');
+    return;
+  }
 
-    try {
-      const response = await fetch('/api/historical-stats/sync/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          library_ids: successfulFetches.map(lib => lib.library_id),
-          month: selectedMonth,
-          year: selectedYear
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to sync to Libraries page');
-      }
-      
-      const data = await response.json();
-      
-      // Update sync status with results
-      setSyncStatus(prev => ({
-        ...prev,
-        isLoading: false,
-        completed: data.results.filter(r => r.success).map(r => ({
-          library_id: r.library_id,
-          library_name: r.library_name,
-          message: r.message
-        })),
-        failed: data.results.filter(r => !r.success).map(r => ({
-          library_id: r.library_id,
-          library_name: r.library_name,
-          error: r.error
-        }))
-      }));
+  // Process results after successful API call
+  const successResults = syncData.results.filter(r => r.success);
+  const failureResults = syncData.results.filter(r => !r.success);
 
-      // Notify other pages (Upload, Teachers) that teachers list may have changed
-      try {
-        window.dispatchEvent(new Event('teachers:updated'));
-      } catch (_) {
-        // Ignore if window not available (SSR tests etc.)
-      }
+  setSyncStatus(prev => ({
+    ...prev,
+    isLoading: false,
+    completed: successResults.map(r => ({
+      library_id: r.library_id,
+      library_name: r.library_name,
+      message: r.message || 'Successfully synced'
+    })),
+    failed: failureResults.map(r => ({
+      library_id: r.library_id,
+      library_name: r.library_name,
+      error: r.error || 'Failed to sync'
+    }))
+  }));
 
-      // Show concise page-level sync summary
-      const successCount = (data.results || []).filter(r => r.success).length;
-      const failCount = (data.results || []).filter(r => !r.success).length;
-      if (successCount > 0 || failCount > 0) {
-        showMessage(
-          `Synced ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}. Review on Libraries page.`,
-          failCount > 0 ? 'error' : 'success'
-        );
-      }
-      
-    } catch (error) {
-      console.error('Error syncing to Libraries page:', error);
-      setSyncStatus(prev => ({
-        ...prev,
-        isLoading: false,
-        failed: successfulFetches.map(lib => ({
-          library_id: lib.library_id,
-          library_name: lib.library_name,
-          error: error.message
-        }))
-      }));
-    }
-  };
+  // Notify about teachers list update without try-catch
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('teachers:updated'));
+  }
 
+  // Show sync summary
+  const successCount = successResults.length;
+  const failCount = failureResults.length;
+  
+  showMessage(
+    `Synced ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}. Review on Libraries page.`,
+    failCount > 0 ? 'error' : 'success'
+  );
+};
   const closeStatusPopup = () => {
     // Snapshot before resetting for correct refresh behavior
     const hadFetchCompleted = Array.isArray(fetchStatus?.completed) && fetchStatus.completed.length > 0;
@@ -1275,4 +1265,5 @@ const fetchLibraryStats = async () => {
 
 
 export default BunnyLibraries;
+
 
