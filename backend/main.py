@@ -271,24 +271,27 @@ async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
                     db.refresh(teacher)
                 
                 # Create or update monthly stats
-                existing_stat = db.query(models.MonthlyStats).filter(
-                    models.MonthlyStats.teacher_id == teacher.id,
-                    models.MonthlyStats.month == month,
-                    models.MonthlyStats.year == year
-                ).first()
-                
-                if existing_stat:
-                    existing_stat.video_views = stats.get("views", 0)
-                    existing_stat.total_watch_time_seconds = stats.get("watch_time_seconds", 0)
-                else:
-                    new_stat = models.MonthlyStats(
-                        teacher_id=teacher.id,
-                        month=month,
-                        year=year,
-                        video_views=stats.get("views", 0),
-                        total_watch_time_seconds=stats.get("watch_time_seconds", 0)
-                    )
-                    db.add(new_stat)
+# REPLACE the existing MonthlyStats update/create block with this exact code:
+
+existing_stat = db.query(models.MonthlyStats).filter(
+    models.MonthlyStats.teacher_id == teacher.id,
+    models.MonthlyStats.month == month,
+    models.MonthlyStats.year == year
+).first()
+
+if existing_stat:
+    # Use the keys returned by get_library_monthly_stats (total_views, total_watch_time_seconds)
+    existing_stat.video_views = stats.get("total_views", 0)
+    existing_stat.total_watch_time_seconds = stats.get("total_watch_time_seconds", 0)
+else:
+    new_stat = models.MonthlyStats(
+        teacher_id=teacher.id,
+        month=month,
+        year=year,
+        video_views=stats.get("total_views", 0),
+        total_watch_time_seconds=stats.get("total_watch_time_seconds", 0)
+    )
+    db.add(new_stat)
                 
                 synced_libraries.append({
                     "library_id": library_id,
@@ -1014,9 +1017,9 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
                     existing_stats.views_chart = stats_data.get("views_chart", {})
                     existing_stats.watch_time_chart = stats_data.get("watch_time_chart", {})
                     existing_stats.bandwidth_chart = stats_data.get("bandwidth_chart", {})
-                    existing_stats.library_name = display_name
-                    existing_stats.fetch_date = datetime.now()
-                    existing_stats.updated_at = datetime.now()
+existing_stats.library_name = display_name
+existing_stats.fetch_date = datetime.now(pytz.UTC)          # previously: datetime.now()
+existing_stats.updated_at = datetime.now(pytz.UTC)         # previously: datetime.now()
                     
                     db.commit()
                     db.refresh(existing_stats)
@@ -1041,20 +1044,20 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
                     except Exception:
                         display_name = stats_data.get("library_name", f"Library {library_id}")
 
-                    new_stats = models.LibraryHistoricalStats(
-                        library_id=library_id,
-                        library_name=display_name,
-                        month=request.month,
-                        year=request.year,
-                        total_views=stats_data.get("total_views", 0),
-                        total_watch_time_seconds=stats_data.get("total_watch_time_seconds", 0),
-                        bandwidth_gb=stats_data.get("bandwidth_gb", 0.0),
-                        views_chart=stats_data.get("views_chart", {}),
-                        watch_time_chart=stats_data.get("watch_time_chart", {}),
-                        bandwidth_chart=stats_data.get("bandwidth_chart", {}),
-                        fetch_date=datetime.now(),
-                        is_synced=False
-                    )
+new_stats = models.LibraryHistoricalStats(
+    library_id=library_id,
+    library_name=display_name,
+    month=request.month,
+    year=request.year,
+    total_views=stats_data.get("total_views", 0),
+    total_watch_time_seconds=stats_data.get("total_watch_time_seconds", 0),
+    bandwidth_gb=stats_data.get("bandwidth_gb", 0.0),
+    views_chart=stats_data.get("views_chart", {}),
+    watch_time_chart=stats_data.get("watch_time_chart", {}),
+    bandwidth_chart=stats_data.get("bandwidth_chart", {}),
+    fetch_date=datetime.now(pytz.UTC),   # previously: datetime.now()
+    is_synced=False
+)
                     
                     db.add(new_stats)
                     db.commit()
@@ -1132,10 +1135,9 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
                     ))
                     already_synced += 1
                 else:
-                    stats.is_synced = True
-                    stats.sync_date = datetime.now()
-                    stats.updated_at = datetime.now()
-
+stats.is_synced = True
+stats.sync_date = datetime.now(pytz.UTC)     # previously: datetime.now()
+stats.updated_at = datetime.now(pytz.UTC)    # previously: datetime.now()
                     # Upsert Teacher record for this library so it appears in Upload/Data pages
                     try:
                         teacher = db.query(models.Teacher).filter(models.Teacher.bunny_library_id == stats.library_id).first()
