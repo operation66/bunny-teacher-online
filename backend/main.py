@@ -991,7 +991,7 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
         successful_fetches = 0
         failed_fetches = 0
         skipped_fetches = 0
-        
+
         for library_id in request.library_ids:
             try:
                 # Check if data already exists for this library/month/year
@@ -1000,31 +1000,32 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
                     models.LibraryHistoricalStats.month == request.month,
                     models.LibraryHistoricalStats.year == request.year
                 ).first()
-                
+
+                # Get fresh stats from Bunny service
+                stats_data = await get_library_monthly_stats(library_id, request.month, request.year, db)
+
+                # Prefer authoritative name from LibraryConfig if available
+                try:
+                    cfg = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
+                    display_name = (cfg.library_name if cfg and cfg.library_name else stats_data.get("library_name", f"Library {library_id}"))
+                except Exception:
+                    display_name = stats_data.get("library_name", f"Library {library_id}")
+
                 if existing_stats:
                     # Update existing record
-                    stats_data = await get_library_monthly_stats(library_id, request.month, request.year, db)
-                    
-                    # Prefer authoritative name from LibraryConfig if available
-                    try:
-                        cfg = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
-                        display_name = (cfg.library_name if cfg and cfg.library_name else stats_data.get("library_name", f"Library {library_id}"))
-                    except Exception:
-                        display_name = stats_data.get("library_name", f"Library {library_id}")
-
                     existing_stats.total_views = stats_data.get("total_views", 0)
                     existing_stats.total_watch_time_seconds = stats_data.get("total_watch_time_seconds", 0)
                     existing_stats.bandwidth_gb = stats_data.get("bandwidth_gb", 0.0)
                     existing_stats.views_chart = stats_data.get("views_chart", {})
                     existing_stats.watch_time_chart = stats_data.get("watch_time_chart", {})
                     existing_stats.bandwidth_chart = stats_data.get("bandwidth_chart", {})
-existing_stats.library_name = display_name
-existing_stats.fetch_date = datetime.now(pytz.UTC)          # previously: datetime.now()
-existing_stats.updated_at = datetime.now(pytz.UTC)         # previously: datetime.now()
-                    
+                    existing_stats.library_name = display_name
+                    existing_stats.fetch_date = datetime.now(pytz.UTC)
+                    existing_stats.updated_at = datetime.now(pytz.UTC)
+
                     db.commit()
                     db.refresh(existing_stats)
-                    
+
                     results.append(schemas.LibraryFetchStatus(
                         library_id=library_id,
                         library_name=display_name,
@@ -1036,34 +1037,25 @@ existing_stats.updated_at = datetime.now(pytz.UTC)         # previously: datetim
                     successful_fetches += 1
                 else:
                     # Create new record
-                    stats_data = await get_library_monthly_stats(library_id, request.month, request.year, db)
-                    
-                    # Prefer authoritative name from LibraryConfig if available
-                    try:
-                        cfg = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
-                        display_name = (cfg.library_name if cfg and cfg.library_name else stats_data.get("library_name", f"Library {library_id}"))
-                    except Exception:
-                        display_name = stats_data.get("library_name", f"Library {library_id}")
+                    new_stats = models.LibraryHistoricalStats(
+                        library_id=library_id,
+                        library_name=display_name,
+                        month=request.month,
+                        year=request.year,
+                        total_views=stats_data.get("total_views", 0),
+                        total_watch_time_seconds=stats_data.get("total_watch_time_seconds", 0),
+                        bandwidth_gb=stats_data.get("bandwidth_gb", 0.0),
+                        views_chart=stats_data.get("views_chart", {}),
+                        watch_time_chart=stats_data.get("watch_time_chart", {}),
+                        bandwidth_chart=stats_data.get("bandwidth_chart", {}),
+                        fetch_date=datetime.now(pytz.UTC),
+                        is_synced=False
+                    )
 
-new_stats = models.LibraryHistoricalStats(
-    library_id=library_id,
-    library_name=display_name,
-    month=request.month,
-    year=request.year,
-    total_views=stats_data.get("total_views", 0),
-    total_watch_time_seconds=stats_data.get("total_watch_time_seconds", 0),
-    bandwidth_gb=stats_data.get("bandwidth_gb", 0.0),
-    views_chart=stats_data.get("views_chart", {}),
-    watch_time_chart=stats_data.get("watch_time_chart", {}),
-    bandwidth_chart=stats_data.get("bandwidth_chart", {}),
-    fetch_date=datetime.now(pytz.UTC),   # previously: datetime.now()
-    is_synced=False
-)
-                    
                     db.add(new_stats)
                     db.commit()
                     db.refresh(new_stats)
-                    
+
                     results.append(schemas.LibraryFetchStatus(
                         library_id=library_id,
                         library_name=display_name,
@@ -1073,7 +1065,7 @@ new_stats = models.LibraryHistoricalStats(
                         data=new_stats
                     ))
                     successful_fetches += 1
-                    
+
             except Exception as e:
                 logger.error(f"Failed to fetch stats for library {library_id}: {str(e)}")
                 results.append(schemas.LibraryFetchStatus(
@@ -1085,7 +1077,7 @@ new_stats = models.LibraryHistoricalStats(
                     error=str(e)
                 ))
                 failed_fetches += 1
-        
+
         return schemas.BatchFetchResponse(
             success=successful_fetches > 0,
             message=f"Fetched stats for {successful_fetches}/{len(request.library_ids)} libraries",
@@ -1095,10 +1087,11 @@ new_stats = models.LibraryHistoricalStats(
             skipped_fetches=skipped_fetches,
             results=results
         )
-        
+
     except Exception as e:
         logger.error(f"Batch fetch error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))        
+
 
 @app.post("/historical-stats/sync/", response_model=schemas.SyncResponse)
 async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depends(get_db)):
