@@ -71,139 +71,136 @@ const Libraries = () => {
   // Simple in-memory cache to avoid refetching base list unnecessarily
   const baseCacheRef = React.useRef(null);
 
-  const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
-    setLoading(true);
-    try {
-      // Optional: force reload base libraries when user explicitly refreshes
-      if (forceReload) {
-        baseCacheRef.current = null;
-      }
-      // 1) Base libraries from Bunny.net (use cached if available and not forcing names change)
-      let baseData = baseCacheRef.current;
-      if (!baseData) {
-        const { data: baseDataResp } = await api.get('/bunny-libraries/');
-        baseData = baseDataResp;
-        baseCacheRef.current = baseData;
-      }
-
-      const baseMap = new Map();
-      baseData.forEach(lib => {
-        baseMap.set(lib.id, {
-          library_id: lib.id,
-          library_name: lib.name,
-          has_stats: false,
-          monthly_data: [],
-          last_updated: null,
-          video_views: lib.video_views || 0,
-          total_watch_time_seconds: lib.total_watch_time_seconds || 0
-        });
-      });
-
-      // 1a) Optional: Load LibraryConfig names to override/fill missing names
-      let configMap = new Map();
-      try {
-        const { data: cfgData } = await api.get('/library-configs/');
-        (Array.isArray(cfgData) ? cfgData : []).forEach(cfg => {
-          if (cfg && cfg.library_id != null && cfg.library_name) {
-            configMap.set(cfg.library_id, cfg.library_name);
-          }
-        });
-      } catch (_) {
-        // Non-fatal; continue without config overrides
-      }
-
-      // Apply config name overrides to base entries
-      if (configMap.size > 0) {
-        for (const [id, entry] of baseMap.entries()) {
-          const cfgName = configMap.get(id);
-          if (cfgName && cfgName !== entry.library_name) {
-            entry.library_name = cfgName;
-          }
-        }
-      }
-
-      // 2) Historical stats synced via backend
-      let statsData = [];
-      try {
-    const histResp = await fetch(`/api/historical-stats/libraries/?with_stats_only=${withStatsOnly ? 'true' : 'false'}`);
-        if (histResp.ok) {
-          statsData = await histResp.json();
-        }
-      } catch (innerErr) {
-        console.warn('Unable to load historical stats:', innerErr);
-      }
-
-      // 3) Merge stats into base
-      statsData.forEach(statLib => {
-        const id = statLib.library_id ?? statLib.id;
-        const base = baseMap.get(id);
-        if (base) {
-          base.has_stats = Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0;
-          base.monthly_data = statLib.monthly_data || [];
-          base.last_updated = statLib.last_updated || base.last_updated;
-          // Preserve proper name if backend returned a better one
-          const cfgName = configMap.get(id);
-          if (cfgName && cfgName !== base.library_name) {
-            base.library_name = cfgName;
-          } else if (statLib.library_name && statLib.library_name !== base.library_name) {
-            base.library_name = statLib.library_name;
-          }
-        } else {
-          // Stats exist for a library not returned by base list; include it
-          baseMap.set(id, {
-            library_id: id,
-            library_name: configMap.get(id) || statLib.library_name || `Library ${id}`,
-            has_stats: Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0,
-            monthly_data: statLib.monthly_data || [],
-            last_updated: statLib.last_updated || null,
-            video_views: 0,
-            total_watch_time_seconds: 0,
-          });
-        }
-      });
-
-      const merged = Array.from(baseMap.values());
-      setLibraries(merged);
-
-      const withStatsCount = merged.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
-      const modeNote = withStatsOnly ? ' (synced only)' : '';
-      showMessage(
-        `Loaded ${merged.length} libraries; ${withStatsCount} with synced stats${modeNote}`,
-        'success'
-      );
-    } catch (error) {
-      console.error('Error fetching libraries:', error);
-      // Fallback: try historical stats endpoint to at least render synced libraries
-      try {
-    const histResp = await fetch(`/api/historical-stats/libraries/?with_stats_only=${withStatsOnly ? 'true' : 'false'}`);
-        if (histResp.ok) {
-          const data = await histResp.json();
-          const normalized = (Array.isArray(data) ? data : []).map((lib) => ({
-            library_id: lib.library_id ?? lib.id,
-            library_name: lib.library_name ?? lib.name ?? `Library ${lib.library_id ?? lib.id}`,
-            has_stats: Array.isArray(lib.monthly_data) && lib.monthly_data.length > 0,
-            monthly_data: lib.monthly_data ?? [],
-            last_updated: lib.last_updated ?? null,
-            video_views: 0,
-            total_watch_time_seconds: 0,
-          }));
-          setLibraries(normalized);
-          const withStatsCount = normalized.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
-          const modeNote = withStatsOnly ? ' (synced only)' : '';
-          showMessage(`Loaded ${normalized.length} libraries from historical stats; ${withStatsCount} with synced stats${modeNote}`, 'success');
-        } else {
-          setLibraries([]);
-          showMessage(`Backend connection failed. Please ensure the API server is running on port 8001.`, 'error');
-        }
-      } catch (fallbackErr) {
-        console.warn('Historical stats fallback failed:', fallbackErr);
-        setLibraries([]);
-        showMessage(`Backend connection failed. Please ensure the API server is running on port 8001.`, 'error');
-      }
-    } finally {
-      setLoading(false);
+const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
+  setLoading(true);
+  try {
+    // Optional: force reload base libraries when user explicitly refreshes
+    if (forceReload) {
+      baseCacheRef.current = null;
     }
-  };
+    
+    // 1) Base libraries from Bunny.net (use cached if available and not forcing names change)
+    let baseData = baseCacheRef.current;
+    if (!baseData) {
+      const { data: baseDataResp } = await api.get('/bunny-libraries/');
+      baseData = baseDataResp;
+      baseCacheRef.current = baseData;
+    }
+
+    const baseMap = new Map();
+    baseData.forEach(lib => {
+      baseMap.set(lib.id, {
+        library_id: lib.id,
+        library_name: lib.name,
+        has_stats: false,
+        monthly_data: [],
+        last_updated: null,
+        video_views: lib.video_views || 0,
+        total_watch_time_seconds: lib.total_watch_time_seconds || 0
+      });
+    });
+
+    // 1a) Optional: Load LibraryConfig names to override/fill missing names
+    let configMap = new Map();
+    try {
+      const { data: cfgData } = await api.get('/library-configs/');
+      (Array.isArray(cfgData) ? cfgData : []).forEach(cfg => {
+        if (cfg && cfg.library_id != null && cfg.library_name) {
+          configMap.set(cfg.library_id, cfg.library_name);
+        }
+      });
+    } catch (_) {
+      // Non-fatal; continue without config overrides
+    }
+
+    // Apply config name overrides to base entries
+    if (configMap.size > 0) {
+      for (const [id, entry] of baseMap.entries()) {
+        const cfgName = configMap.get(id);
+        if (cfgName && cfgName !== entry.library_name) {
+          entry.library_name = cfgName;
+        }
+      }
+    }
+
+    // 2) Historical stats synced via backend
+    let statsData = [];
+    try {
+      const { data: histData } = await api.get('/historical-stats/libraries/', {
+        params: { with_stats_only: withStatsOnly }
+      });
+      statsData = histData || [];
+    } catch (innerErr) {
+      console.warn('Unable to load historical stats:', innerErr);
+    }
+
+    // 3) Merge stats into base
+    statsData.forEach(statLib => {
+      const id = statLib.library_id ?? statLib.id;
+      const base = baseMap.get(id);
+      if (base) {
+        base.has_stats = Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0;
+        base.monthly_data = statLib.monthly_data || [];
+        base.last_updated = statLib.last_updated || base.last_updated;
+        // Preserve proper name if backend returned a better one
+        const cfgName = configMap.get(id);
+        if (cfgName && cfgName !== base.library_name) {
+          base.library_name = cfgName;
+        } else if (statLib.library_name && statLib.library_name !== base.library_name) {
+          base.library_name = statLib.library_name;
+        }
+      } else {
+        // Stats exist for a library not returned by base list; include it
+        baseMap.set(id, {
+          library_id: id,
+          library_name: configMap.get(id) || statLib.library_name || `Library ${id}`,
+          has_stats: Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0,
+          monthly_data: statLib.monthly_data || [],
+          last_updated: statLib.last_updated || null,
+          video_views: 0,
+          total_watch_time_seconds: 0,
+        });
+      }
+    });
+
+    const merged = Array.from(baseMap.values());
+    setLibraries(merged);
+
+    const withStatsCount = merged.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
+    const modeNote = withStatsOnly ? ' (synced only)' : '';
+    showMessage(
+      `Loaded ${merged.length} libraries; ${withStatsCount} with synced stats${modeNote}`,
+      'success'
+    );
+  } catch (error) {
+    console.error('Error fetching libraries:', error);
+    // Fallback: try historical stats endpoint to at least render synced libraries
+    try {
+      const { data: histData } = await api.get('/historical-stats/libraries/', {
+        params: { with_stats_only: withStatsOnly }
+      });
+      const normalized = (Array.isArray(histData) ? histData : []).map((lib) => ({
+        library_id: lib.library_id ?? lib.id,
+        library_name: lib.library_name ?? lib.name ?? `Library ${lib.library_id ?? lib.id}`,
+        has_stats: Array.isArray(lib.monthly_data) && lib.monthly_data.length > 0,
+        monthly_data: lib.monthly_data ?? [],
+        last_updated: lib.last_updated ?? null,
+        video_views: 0,
+        total_watch_time_seconds: 0,
+      }));
+      setLibraries(normalized);
+      const withStatsCount = normalized.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
+      const modeNote = withStatsOnly ? ' (synced only)' : '';
+      showMessage(`Loaded ${normalized.length} libraries from historical stats; ${withStatsCount} with synced stats${modeNote}`, 'success');
+    } catch (fallbackErr) {
+      console.warn('Historical stats fallback failed:', fallbackErr);
+      setLibraries([]);
+      showMessage(`Backend connection failed. Please ensure the API server is running.`, 'error');
+    }
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     // Refetch when the analytics-only toggle changes
@@ -227,25 +224,13 @@ const Libraries = () => {
     return new Intl.NumberFormat().format(num);
   };
 
-  const formatWatchTime = (seconds) => {
-    if (!seconds && seconds !== 0) return 'N/A';
-    // Display months, days, hours, minutes, seconds similar to Fetch Stats
-    const months = Math.floor(seconds / (30 * 24 * 3600));
-    const days = Math.floor((seconds % (30 * 24 * 3600)) / (24 * 3600));
-    const hours = Math.floor((seconds % (24 * 3600)) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const remainingSeconds = seconds % 60;
-
-    let result = '';
-    if (months > 0) result += `${months}M `;
-    if (days > 0) result += `${days}D `;
-    if (hours > 0) result += `${hours}h `;
-    if (minutes > 0) result += `${minutes}m `;
-    if (remainingSeconds > 0 || result === '') result += `${remainingSeconds}s`;
-
-    return result.trim();
-  };
-
+const formatWatchTime = (seconds) => {
+  if (!seconds && seconds !== 0) return 'N/A';
+  const hours = Math.floor(seconds / 3600);
+  const remainingSeconds = seconds % 3600;
+  return `${hours.toLocaleString()}h ${remainingSeconds}s`;
+};
+   
   // Bandwidth display removed per request
 
   const getMonthName = (month) => {
