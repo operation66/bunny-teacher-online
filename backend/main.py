@@ -1092,15 +1092,25 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
 async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depends(get_db)):
     """
     Mark historical stats as synced to Libraries page
+    IMPROVED: Better error messages and debugging
     """
     try:
+        # IMPROVED: Debug logging to see what's being requested
+        logger.info("="*60)
+        logger.info("SYNC TO LIBRARIES PAGE - REQUEST RECEIVED")
+        logger.info(f"Library IDs: {request.library_ids}")
+        logger.info(f"Month: {request.month}")
+        logger.info(f"Year: {request.year}")
+        logger.info("="*60)
+        
         results = []
         synced_libraries = 0
         failed_syncs = 0
         already_synced = 0
 
-        # Get stats to sync - filter by month and year as well
+        # IMPROVED: Better query logic
         query = db.query(models.LibraryHistoricalStats)
+        
         if request.library_ids:
             query = query.filter(
                 models.LibraryHistoricalStats.library_id.in_(request.library_ids),
@@ -1108,56 +1118,103 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
                 models.LibraryHistoricalStats.year == request.year
             )
         else:
-            query = query.filter(models.LibraryHistoricalStats.is_synced == False)
+            # If no specific libraries, sync all unsynced stats for this month/year
+            query = query.filter(
+                models.LibraryHistoricalStats.month == request.month,
+                models.LibraryHistoricalStats.year == request.year,
+                models.LibraryHistoricalStats.is_synced == False
+            )
 
         stats_to_sync = query.all()
+        
+        # IMPROVED: Better error message if nothing found
+        if len(stats_to_sync) == 0:
+            logger.warning("NO STATS FOUND TO SYNC!")
+            
+            # Check if data exists but with different month/year
+            if request.library_ids:
+                any_stats = db.query(models.LibraryHistoricalStats).filter(
+                    models.LibraryHistoricalStats.library_id.in_(request.library_ids)
+                ).all()
+                
+                if len(any_stats) == 0:
+                    error_msg = (
+                        f"No stats found for libraries {request.library_ids}. "
+                        "Please fetch stats first using the Fetch Stats page."
+                    )
+                    logger.error(error_msg)
+                    raise HTTPException(status_code=404, detail=error_msg)
+                else:
+                    available_periods = list(set([(s.month, s.year) for s in any_stats]))
+                    error_msg = (
+                        f"No stats found for month={request.month}, year={request.year}. "
+                        f"Available periods: {available_periods}. "
+                        "Make sure you're syncing the same month/year you fetched."
+                    )
+                    logger.error(error_msg)
+                    raise HTTPException(status_code=404, detail=error_msg)
+            else:
+                error_msg = (
+                    f"No unsynced stats found for month={request.month}, year={request.year}. "
+                    "Either stats haven't been fetched yet, or they're already synced."
+                )
+                logger.warning(error_msg)
+                raise HTTPException(status_code=404, detail=error_msg)
 
+        logger.info(f"Found {len(stats_to_sync)} stats to sync")
+
+        # Process each stat
         for stats in stats_to_sync:
             try:
-                if stats.is_synced:
-                    results.append(schemas.LibrarySyncStatus(
-                        library_id=stats.library_id,
-                        library_name=stats.library_name,
-                        status="already_synced",
-                        success=True,
-                        message="Already synced"
-                    ))
-                    already_synced += 1
-                else:
-                    # mark as synced and set timezone-aware timestamps
-                    stats.is_synced = True
-                    stats.sync_date = datetime.now(pytz.UTC)
-                    stats.updated_at = datetime.now(pytz.UTC)
+                # IMPROVED: Allow re-syncing (remove the skip for already synced)
+                # Always sync, update timestamp
+                stats.is_synced = True
+                stats.sync_date = datetime.now(pytz.UTC)
+                stats.updated_at = datetime.now(pytz.UTC)
 
-                    # Upsert Teacher record for this library so it appears in Upload/Data pages
-                    try:
-                        teacher = db.query(models.Teacher).filter(models.Teacher.bunny_library_id == stats.library_id).first()
-                        # Prefer authoritative name from LibraryConfig if available
-                        cfg = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == stats.library_id).first()
-                        display_name = (cfg.library_name if cfg and cfg.library_name else (stats.library_name or f"Library {stats.library_id}"))
+                # IMPROVED: Ensure Teacher record exists with correct name
+                try:
+                    teacher = db.query(models.Teacher).filter(
+                        models.Teacher.bunny_library_id == stats.library_id
+                    ).first()
+                    
+                    # Get authoritative name from LibraryConfig
+                    cfg = db.query(models.LibraryConfig).filter(
+                        models.LibraryConfig.library_id == stats.library_id
+                    ).first()
+                    display_name = (
+                        cfg.library_name if cfg and cfg.library_name 
+                        else stats.library_name or f"Library {stats.library_id}"
+                    )
 
-                        if teacher:
-                            # Update name if different (keeps dropdown in sync with Libraries page)
-                            if teacher.name != display_name:
-                                teacher.name = display_name
-                        else:
-                            teacher = models.Teacher(
-                                name=display_name,
-                                bunny_library_id=stats.library_id
-                            )
-                            db.add(teacher)
-                    except Exception as upsert_err:
-                        # Log but do not fail the sync; front-end will still show stats
-                        logger.error(f"Teacher upsert failed for library {stats.library_id}: {str(upsert_err)}")
+                    if teacher:
+                        # Update name if different
+                        if teacher.name != display_name:
+                            logger.info(f"Updating teacher name: {teacher.name} → {display_name}")
+                            teacher.name = display_name
+                    else:
+                        # Create new teacher
+                        logger.info(f"Creating new teacher: {display_name}")
+                        teacher = models.Teacher(
+                            name=display_name,
+                            bunny_library_id=stats.library_id
+                        )
+                        db.add(teacher)
+                        
+                except Exception as teacher_err:
+                    logger.error(f"Teacher upsert failed for library {stats.library_id}: {str(teacher_err)}")
+                    # Continue anyway - sync will still work
 
-                    results.append(schemas.LibrarySyncStatus(
-                        library_id=stats.library_id,
-                        library_name=stats.library_name,
-                        status="synced",
-                        success=True,
-                        message="Successfully synced"
-                    ))
-                    synced_libraries += 1
+                results.append(schemas.LibrarySyncStatus(
+                    library_id=stats.library_id,
+                    library_name=stats.library_name,
+                    status="synced",
+                    success=True,
+                    message=f"Synced successfully - {stats.total_views} views, {stats.total_watch_time_seconds} seconds"
+                ))
+                synced_libraries += 1
+                
+                logger.info(f"✓ Synced library {stats.library_id}: {stats.library_name}")
 
             except Exception as e:
                 logger.error(f"Failed to sync library {stats.library_id}: {str(e)}")
@@ -1171,11 +1228,18 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
                 ))
                 failed_syncs += 1
 
+        # Commit all changes
         db.commit()
+        
+        logger.info("="*60)
+        logger.info("SYNC COMPLETE")
+        logger.info(f"Successfully synced: {synced_libraries}")
+        logger.info(f"Failed: {failed_syncs}")
+        logger.info("="*60)
 
         return schemas.SyncResponse(
             success=synced_libraries > 0,
-            message=f"Synced {synced_libraries} libraries",
+            message=f"Synced {synced_libraries} libraries to Libraries page",
             total_libraries=len(stats_to_sync),
             synced_libraries=synced_libraries,
             failed_syncs=failed_syncs,
@@ -1183,9 +1247,16 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
             results=results
         )
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404 errors above)
+        raise
     except Exception as e:
+        db.rollback()
         logger.error(f"Sync error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
 
 @app.get("/historical-stats/libraries/", response_model=List[schemas.LibraryWithHistory])
 async def get_libraries_with_history(
