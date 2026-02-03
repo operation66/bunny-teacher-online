@@ -233,33 +233,30 @@ async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
         library_ids = request.get("library_ids", [])
         month = request.get("month", datetime.now().month)
         year = request.get("year", datetime.now().year)
-        
+
         if not library_ids:
             raise HTTPException(status_code=400, detail="No library IDs provided")
-        
+
         synced_libraries = []
-        
+
         for library_id in library_ids:
             try:
                 # Get accurate stats from Stream API
-                stats = await get_library_monthly_stats(library_id, month, year, db)
-                
+                stats_data = await get_library_monthly_stats(library_id, month, year, db)
+
                 # Only use real API data - no mock data fallback
-                if not stats or "error" in stats:
+                if not stats_data or "error" in stats_data:
                     logger.error(f"Failed to get stats for library {library_id} - skipping")
                     continue
-                
-                # Use the real stats from Bunny.net
-                stats = {
-                    "views": stats.get("total_views", 0),
-                    "watch_time_seconds": stats.get("total_watch_time_seconds", 0),
-                    "last_updated": stats.get("last_updated")
-                }
-                
+
+                # Use the real stats from Bunny.net (use the canonical keys)
+                views = stats_data.get("total_views", 0)
+                watch_time_seconds = stats_data.get("total_watch_time_seconds", 0)
+                last_updated = stats_data.get("last_updated")
+
                 # Find or create teacher record (prefer configured library name)
                 teacher = db.query(models.Teacher).filter(models.Teacher.bunny_library_id == library_id).first()
                 if not teacher:
-                    # Prefer authoritative name from LibraryConfig if available
                     cfg = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
                     display_name = (cfg.library_name if cfg and cfg.library_name else f"Library {library_id}")
 
@@ -270,49 +267,47 @@ async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
                     db.add(teacher)
                     db.commit()
                     db.refresh(teacher)
-                
-                # Create or update monthly stats
-# REPLACE the existing MonthlyStats update/create block with this exact code:
 
-existing_stat = db.query(models.MonthlyStats).filter(
-    models.MonthlyStats.teacher_id == teacher.id,
-    models.MonthlyStats.month == month,
-    models.MonthlyStats.year == year
-).first()
+                # Create or update monthly stats (consistent keys)
+                existing_stat = db.query(models.MonthlyStats).filter(
+                    models.MonthlyStats.teacher_id == teacher.id,
+                    models.MonthlyStats.month == month,
+                    models.MonthlyStats.year == year
+                ).first()
 
-if existing_stat:
-    # Use the keys returned by get_library_monthly_stats (total_views, total_watch_time_seconds)
-    existing_stat.video_views = stats.get("total_views", 0)
-    existing_stat.total_watch_time_seconds = stats.get("total_watch_time_seconds", 0)
-else:
-    new_stat = models.MonthlyStats(
-        teacher_id=teacher.id,
-        month=month,
-        year=year,
-        video_views=stats.get("total_views", 0),
-        total_watch_time_seconds=stats.get("total_watch_time_seconds", 0)
-    )
-    db.add(new_stat)
-                
+                if existing_stat:
+                    existing_stat.video_views = views
+                    existing_stat.total_watch_time_seconds = watch_time_seconds
+                else:
+                    new_stat = models.MonthlyStats(
+                        teacher_id=teacher.id,
+                        month=month,
+                        year=year,
+                        video_views=views,
+                        total_watch_time_seconds=watch_time_seconds
+                    )
+                    db.add(new_stat)
+
                 synced_libraries.append({
                     "library_id": library_id,
-                    "views": stats.get("views", 0),
-                    "watch_time_seconds": stats.get("watch_time_seconds", 0),
-                    "last_updated": stats.get("last_updated")
+                    "views": views,
+                    "watch_time_seconds": watch_time_seconds,
+                    "last_updated": last_updated
                 })
-                
+
             except Exception as e:
                 logger.error(f"Error syncing stats for library {library_id}: {str(e)}")
+                # continue syncing remaining libraries
                 continue
-        
+
         db.commit()
-        
+
         return {
             "message": f"Successfully synced statistics for {len(synced_libraries)} libraries",
             "count": len(synced_libraries),
             "synced_libraries": synced_libraries
         }
-        
+
     except Exception as e:
         db.rollback()
         logger.error(f"Error in sync_library_stats: {str(e)}")
@@ -1103,7 +1098,7 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
         synced_libraries = 0
         failed_syncs = 0
         already_synced = 0
-        
+
         # Get stats to sync - filter by month and year as well
         query = db.query(models.LibraryHistoricalStats)
         if request.library_ids:
@@ -1114,9 +1109,9 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
             )
         else:
             query = query.filter(models.LibraryHistoricalStats.is_synced == False)
-        
+
         stats_to_sync = query.all()
-        
+
         for stats in stats_to_sync:
             try:
                 if stats.is_synced:
@@ -1129,9 +1124,11 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
                     ))
                     already_synced += 1
                 else:
-stats.is_synced = True
-stats.sync_date = datetime.now(pytz.UTC)     # previously: datetime.now()
-stats.updated_at = datetime.now(pytz.UTC)    # previously: datetime.now()
+                    # mark as synced and set timezone-aware timestamps
+                    stats.is_synced = True
+                    stats.sync_date = datetime.now(pytz.UTC)
+                    stats.updated_at = datetime.now(pytz.UTC)
+
                     # Upsert Teacher record for this library so it appears in Upload/Data pages
                     try:
                         teacher = db.query(models.Teacher).filter(models.Teacher.bunny_library_id == stats.library_id).first()
@@ -1161,7 +1158,7 @@ stats.updated_at = datetime.now(pytz.UTC)    # previously: datetime.now()
                         message="Successfully synced"
                     ))
                     synced_libraries += 1
-                    
+
             except Exception as e:
                 logger.error(f"Failed to sync library {stats.library_id}: {str(e)}")
                 results.append(schemas.LibrarySyncStatus(
@@ -1173,9 +1170,9 @@ stats.updated_at = datetime.now(pytz.UTC)    # previously: datetime.now()
                     error=str(e)
                 ))
                 failed_syncs += 1
-        
+
         db.commit()
-        
+
         return schemas.SyncResponse(
             success=synced_libraries > 0,
             message=f"Synced {synced_libraries} libraries",
@@ -1185,7 +1182,7 @@ stats.updated_at = datetime.now(pytz.UTC)    # previously: datetime.now()
             already_synced=already_synced,
             results=results
         )
-        
+
     except Exception as e:
         logger.error(f"Sync error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
