@@ -39,6 +39,8 @@ const BunnyLibraries = () => {
   // Visual-only filters for Fetch Stats page (not affecting functionality)
   const [statusFilter, setStatusFilter] = useState('All');
   const [dateRange, setDateRange] = useState('Last 7 Days');
+  // NEW: Filter to show only libraries with fetched data
+  const [showOnlyFetched, setShowOnlyFetched] = useState(false);
 
   // Virtual scroll container (same pattern as Libraries page)
   const scrollRef = React.useRef(null);
@@ -608,23 +610,16 @@ const syncToLibrariesPage = async () => {
     return num?.toString() || '0';
   };
 
+  // FIXED: Watch time format in HH:MM:SS
   const formatWatchTime = (seconds) => {
-    if (!seconds) return '0s';
+    if (!seconds || seconds === 0) return '0:00:00';
     
-    const months = Math.floor(seconds / (30 * 24 * 3600)); // Approximate months (30 days)
-    const days = Math.floor((seconds % (30 * 24 * 3600)) / (24 * 3600));
-    const hours = Math.floor((seconds % (24 * 3600)) / 3600);
+    const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
-    const remainingSeconds = seconds % 60;
+    const secs = seconds % 60;
     
-    let result = '';
-    if (months > 0) result += `${months}M `;
-    if (days > 0) result += `${days}D `;
-    if (hours > 0) result += `${hours}h `;
-    if (minutes > 0) result += `${minutes}m `;
-    if (remainingSeconds > 0 || result === '') result += `${remainingSeconds}s`;
-    
-    return result.trim();
+    // Format as HH:MM:SS
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   const formatLastUpdated = (timestamp) => {
@@ -656,10 +651,17 @@ const syncToLibrariesPage = async () => {
   const filteredAndSortedLibraries = libraries
     .filter(library => {
       const nameLower = (library.name || '').toLowerCase();
-      return (
+      const matchesSearch = (
         nameLower.includes(searchTerm.toLowerCase()) ||
         (library.id?.toString() || '').includes(searchTerm)
       );
+      
+      // FIXED: Add filter for libraries with fetched data only
+      if (showOnlyFetched) {
+        return matchesSearch && libraryStats[library.id] !== undefined;
+      }
+      
+      return matchesSearch;
     })
     .sort((a, b) => {
       let aValue, bValue;
@@ -696,11 +698,41 @@ const syncToLibrariesPage = async () => {
     setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
   }, [loading]);
 
-  // Derived header metrics (visual-only)
-  const processedCount = fetchStatus.completed.length + fetchStatus.failed.length;
-  const successCount = fetchStatus.completed.length;
-  const failedCount = fetchStatus.failed.length;
-  const successRate = processedCount > 0 ? Math.round((successCount / processedCount) * 100) : 0;
+  // FIXED: Calculate actual totals from libraryStats
+  const calculateFetchMetrics = () => {
+    const librariesWithStats = Object.keys(libraryStats).length;
+    const allLibraryIds = new Set(libraries.map(lib => lib.id));
+    const librariesWithoutStats = libraries.length - librariesWithStats;
+    
+    // If we have fetch status data, use that for accuracy
+    if (fetchStatus.completed.length > 0 || fetchStatus.failed.length > 0) {
+      const processedCount = fetchStatus.completed.length + fetchStatus.failed.length;
+      const successCount = fetchStatus.completed.length;
+      const failedCount = fetchStatus.failed.length;
+      const successRate = processedCount > 0 ? Math.round((successCount / processedCount) * 100) : 0;
+      
+      return {
+        processedCount,
+        successCount,
+        failedCount,
+        successRate
+      };
+    }
+    
+    // Otherwise, calculate from library stats
+    const successRate = libraries.length > 0 
+      ? Math.round((librariesWithStats / libraries.length) * 100) 
+      : 0;
+    
+    return {
+      processedCount: librariesWithStats,
+      successCount: librariesWithStats,
+      failedCount: librariesWithoutStats,
+      successRate
+    };
+  };
+
+  const fetchMetrics = calculateFetchMetrics();
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -722,24 +754,24 @@ const syncToLibrariesPage = async () => {
             </Button>
           </div>
         </div>
-        {/* Stat cards */}
+        {/* FIXED: Stat cards now show actual counts */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="rounded-lg border p-4 flex items-center justify-between">
             <div>
               <div className="text-sm text-gray-500">Total Fetches</div>
-              <div className="text-2xl font-semibold flex items-center gap-2">🔄 {processedCount}</div>
+              <div className="text-2xl font-semibold flex items-center gap-2">🔄 {fetchMetrics.processedCount}</div>
             </div>
           </div>
           <div className="rounded-lg border p-4 flex items-center justify-between">
             <div>
               <div className="text-sm text-gray-500">Success Rate</div>
-              <div className="text-2xl font-semibold flex items-center gap-2" style={{ color: '#10b981' }}>✓ {successRate}%</div>
+              <div className="text-2xl font-semibold flex items-center gap-2" style={{ color: '#10b981' }}>✓ {fetchMetrics.successRate}%</div>
             </div>
           </div>
           <div className="rounded-lg border p-4 flex items-center justify-between">
             <div>
               <div className="text-sm text-gray-500">Failed Fetches</div>
-              <div className="text-2xl font-semibold flex items-center gap-2" style={{ color: '#ef4444' }}>✗ {failedCount}</div>
+              <div className="text-2xl font-semibold flex items-center gap-2" style={{ color: '#ef4444' }}>✗ {fetchMetrics.failedCount}</div>
             </div>
           </div>
         </div>
@@ -862,6 +894,16 @@ const syncToLibrariesPage = async () => {
                 <option value="Custom">Custom</option>
               </select>
             </div>
+
+            {/* FIXED: Show only fetched filter */}
+            <Button
+              variant={showOnlyFetched ? "default" : "outline"}
+              onClick={() => setShowOnlyFetched(!showOnlyFetched)}
+              className="flex items-center gap-2"
+            >
+              <Database className="w-4 h-4" />
+              {showOnlyFetched ? 'Show All' : 'Fetched Only'}
+            </Button>
 
             {/* Refresh */}
             <Button 
@@ -1103,6 +1145,7 @@ const syncToLibrariesPage = async () => {
                 <li>• <strong>Raw Numbers:</strong> Toggle to see exact values (e.g., 18,908 instead of 18.9K)</li>
                 <li>• <strong>Data Freshness:</strong> Timestamps show when data was last fetched from Bunny.net API</li>
                 <li>• <strong>API Format Compliance:</strong> Uses Bunny.net's required m-d-Y date format</li>
+                <li>• <strong>Watch Time Format:</strong> Displays in HH:MM:SS format for precise duration tracking</li>
               </ul>
             </div>
           </div>
@@ -1265,5 +1308,3 @@ const syncToLibrariesPage = async () => {
 
 
 export default BunnyLibraries;
-
-
