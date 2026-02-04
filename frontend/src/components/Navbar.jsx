@@ -9,14 +9,15 @@ const Navbar = () => {
   const { user, signOut } = useAuth();
 
   const baseItems = [
-    { path: '/libraries', label: 'Libraries', icon: Database },      // use Database icon
+    { path: '/libraries', label: 'Libraries', icon: Database },
     { path: '/bunny-libraries', label: 'Fetch Stats', icon: Video },
     { path: '/library-config', label: 'API Config', icon: Settings },
     { path: '/upload', label: 'Upload Data', icon: Upload },
     { path: '/dashboard', label: 'Dashboard', icon: TrendingUp },
     { path: '/compare', label: 'Compare', icon: BarChart3 },
-    { path: '/users', label: 'Users', icon: Users },                // include Users here
+    { path: '/users', label: 'Users', icon: Users },
   ];
+
   const navItems = user ? baseItems.filter(i => (user.allowedPages||[]).includes(i.path)) : [];
 
   return (
@@ -46,18 +47,30 @@ const Navbar = () => {
               </Link>
             );
           })}
+
+          {/* Sign In button - only shown when NOT logged in */}
           {!user && (
             <Link to="/signin" style={styles.navLink}>
               <span>Sign In</span>
             </Link>
           )}
+
+          {/* Sign Out button - only shown when logged in */}
           {user && (
-            <>
-              {/* Removed duplicate plain Users link — Users is now part of navItems */}
-              <button
-                /* ...sign out button and other items... */
-              />
-            </>
+            <button
+              onClick={() => {
+                signOut();
+                navigate('/signin');
+              }}
+              style={{
+                ...styles.navLink,
+                backgroundColor: '#e74c3c',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <span>Sign Out</span>
+            </button>
           )}
         </div>
       </div>
