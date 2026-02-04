@@ -99,10 +99,4 @@ const UsersPageInner = () => {
   );
 };
 
-const Users = () => (
-  <ProtectedRoute path="/users">
-    <UsersPageInner />
-  </ProtectedRoute>
-);
-
-export default Users;
+export default UsersPageInner;
