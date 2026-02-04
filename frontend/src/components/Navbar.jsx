@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Users, Upload, BarChart3, TrendingUp, Video, Settings } from 'lucide-react';
+import { Home, Users, Upload, BarChart3, TrendingUp, Video, Settings, Database } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
@@ -9,12 +9,13 @@ const Navbar = () => {
   const { user, signOut } = useAuth();
 
   const baseItems = [
-    { path: '/libraries', label: 'Libraries', icon: Users },
+    { path: '/libraries', label: 'Libraries', icon: Database },      // use Database icon
     { path: '/bunny-libraries', label: 'Fetch Stats', icon: Video },
     { path: '/library-config', label: 'API Config', icon: Settings },
     { path: '/upload', label: 'Upload Data', icon: Upload },
     { path: '/dashboard', label: 'Dashboard', icon: TrendingUp },
     { path: '/compare', label: 'Compare', icon: BarChart3 },
+    { path: '/users', label: 'Users', icon: Users },                // include Users here
   ];
   const navItems = user ? baseItems.filter(i => (user.allowedPages||[]).includes(i.path)) : [];
 
@@ -52,15 +53,10 @@ const Navbar = () => {
           )}
           {user && (
             <>
-              <Link to="/users" style={styles.navLink}>
-                <span>Users</span>
-              </Link>
+              {/* Removed duplicate plain Users link — Users is now part of navItems */}
               <button
-                onClick={() => { signOut(); navigate('/signin'); }}
-                style={{...styles.navLink, background:'transparent', border:'none', cursor:'pointer'}}
-              >
-                <span>Sign Out</span>
-              </button>
+                /* ...sign out button and other items... */
+              />
             </>
           )}
         </div>
