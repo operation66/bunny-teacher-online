@@ -12,9 +12,7 @@ const Navbar = () => {
     { path: '/libraries', label: 'Libraries', icon: Database },
     { path: '/bunny-libraries', label: 'Fetch Stats', icon: Video },
     { path: '/library-config', label: 'API Config', icon: Settings },
-    { path: '/upload', label: 'Upload Data', icon: Upload },
     { path: '/dashboard', label: 'Dashboard', icon: TrendingUp },
-    { path: '/compare', label: 'Compare', icon: BarChart3 },
     { path: '/users', label: 'Users', icon: Users },
   ];
 
