@@ -24,7 +24,5 @@ export const PAGES = [
   { key: '/libraries', label: 'Libraries' },
   { key: '/bunny-libraries', label: 'Fetch Stats' },
   { key: '/library-config', label: 'API Config' },
-  { key: '/upload', label: 'Upload Data' },
   { key: '/dashboard', label: 'Dashboard' },
-  { key: '/compare', label: 'Compare' }
 ];
