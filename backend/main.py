@@ -788,8 +788,23 @@ def create_library_config(config: schemas.LibraryConfigCreate, db: Session = Dep
         db.refresh(db_config)
         return db_config
 
-@app.put("/library-configs/{library_id}", response_model=schemas.LibraryConfig)
+from datetime import datetime
+
+@app.put("/library-configs/{library_id}")
 def update_library_config(library_id: int, config: schemas.LibraryConfigUpdate, db: Session = Depends(get_db)):
+    db_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
+    
+    # Update the fields
+    for key, value in config.dict(exclude_unset=True).items():
+        setattr(db_config, key, value)
+    
+    # IMPORTANT: Add this line to update the timestamp
+    db_config.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(db_config)
+    return db_config
+    
     """Update library configuration"""
     db_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
     if not db_config:
