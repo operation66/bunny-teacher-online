@@ -11,7 +11,6 @@ import {
   Save, 
   Key, 
   Database,
-  Settings,
   CheckCircle,
   XCircle,
   Eye,
@@ -20,7 +19,8 @@ import {
   ChevronDown,
   ChevronRight,
   AlertCircle,
-  Loader
+  Loader,
+  Trash2
 } from 'lucide-react';
 
 const LibraryConfig = () => {
@@ -34,8 +34,6 @@ const LibraryConfig = () => {
   const [pendingChanges, setPendingChanges] = useState({});
   const [expandedId, setExpandedId] = useState(null);
   const [activeOnly, setActiveOnly] = useState(false);
-  const [typeFilter, setTypeFilter] = useState('All Configs');
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
@@ -52,6 +50,10 @@ const LibraryConfig = () => {
     failedRows: [],
     isComplete: false
   });
+
+  // New state for clear API keys confirmation
+  const [showClearConfirmation, setShowClearConfirmation] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -102,6 +104,46 @@ const LibraryConfig = () => {
     const libraryId = getLibraryId(row);
     const apiKey = getApiKey(row);
     return !!(libraryId && apiKey);
+  };
+
+  // Clear all API keys function
+  const clearAllApiKeys = async () => {
+    setClearing(true);
+    try {
+      let clearedCount = 0;
+      let errorCount = 0;
+
+      // Clear API keys for all configs
+      for (const config of configs) {
+        try {
+          await api.put(`/library-configs/${config.library_id}`, {
+            stream_api_key: '',
+            is_active: false
+          });
+          clearedCount++;
+        } catch (error) {
+          console.error(`Failed to clear API key for library ${config.library_id}:`, error);
+          errorCount++;
+        }
+      }
+
+      setMessage({
+        type: 'success',
+        text: `Cleared API keys for ${clearedCount} libraries. ${errorCount > 0 ? `Failed: ${errorCount}` : ''}`
+      });
+
+      // Refresh the list
+      await fetchConfigs();
+      setShowClearConfirmation(false);
+    } catch (error) {
+      console.error('Error clearing API keys:', error);
+      setMessage({
+        type: 'error',
+        text: `Failed to clear API keys: ${error.message}`
+      });
+    } finally {
+      setClearing(false);
+    }
   };
 
   const handleExcelUpload = async (event) => {
@@ -381,10 +423,6 @@ const LibraryConfig = () => {
 
   const totalConfigs = configs.length;
   const activeCount = configs.filter(c => !!(c.stream_api_key && String(c.stream_api_key).trim().length > 0)).length;
-  const latestUpdate = configs.reduce((acc, c) => {
-    const t = c.updated_at ? new Date(c.updated_at).getTime() : 0;
-    return t > acc ? t : acc;
-  }, 0);
 
   const formatTimeAgo = (dateInput) => {
     if (!dateInput) return '—';
@@ -448,8 +486,8 @@ const LibraryConfig = () => {
           </div>
         </div>
 
-        {/* Stat Cards */}
-        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Stat Cards - Removed Last Update */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
             <div className="text-sm text-indigo-600 font-medium flex items-center gap-2">
               <span>🔧</span>
@@ -464,13 +502,6 @@ const LibraryConfig = () => {
             </div>
             <div className="text-2xl font-semibold text-indigo-800 mt-1">{activeCount}</div>
           </div>
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
-            <div className="text-sm text-indigo-600 font-medium flex items-center gap-2">
-              <span>🕐</span>
-              Last Update
-            </div>
-            <div className="text-base font-medium text-indigo-800 mt-1">{latestUpdate ? `Updated ${formatTimeAgo(new Date(latestUpdate))}` : 'No updates yet'}</div>
-          </div>
         </div>
       </div>
 
@@ -483,7 +514,7 @@ const LibraryConfig = () => {
         </Alert>
       )}
 
-      {/* Search & Filters */}
+      {/* Search & Filters - Removed Type Filter and Settings Button */}
       <div className="rounded-lg border border-slate-200 bg-white p-4 mb-4">
         <div className="flex flex-col md:flex-row md:items-center gap-3">
           <div className="relative flex-1 min-w-[240px]">
@@ -499,24 +530,6 @@ const LibraryConfig = () => {
             <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
             Active Only
           </label>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-600">Type:</span>
-            <select 
-              className="text-sm border border-slate-300 rounded px-2 py-1"
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-            >
-              <option>All Configs</option>
-              <option>REST APIs</option>
-              <option>GraphQL</option>
-              <option>Webhooks</option>
-              <option>Custom</option>
-            </select>
-          </div>
-          <Button variant="outline" className="flex items-center gap-2" onClick={() => setShowSettingsModal(true)}>
-            <Settings className="h-4 w-4" />
-            Settings
-          </Button>
         </div>
       </div>
 
@@ -778,7 +791,7 @@ const LibraryConfig = () => {
           )}
         </div>
 
-        {/* Right: Quick Actions (40%) */}
+        {/* Right: Quick Actions (40%) - Updated with Clear API Keys and removed Bulk Edit */}
         <div className="lg:col-span-2">
           <div className="bg-[#f8fafc] p-6 border border-slate-200 rounded-xl">
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Quick Actions & Info</h3>
@@ -800,10 +813,18 @@ const LibraryConfig = () => {
                   📤 Upload Excel (API Keys)
                 </Button>
               </div>
-              <Button variant="outline" className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center gap-2" disabled>
-                📋 Bulk Edit
+              
+              {/* Clear API Keys Button */}
+              <Button 
+                className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white"
+                onClick={() => setShowClearConfirmation(true)}
+                disabled={configs.length === 0}
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear All API Keys
               </Button>
-              <Button variant="destructive" className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center gap-2" disabled={selectedIds.size === 0}>
+
+              <Button variant="destructive" className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2" disabled={selectedIds.size === 0}>
                 🗑️ Delete Selected
               </Button>
             </div>
@@ -813,6 +834,49 @@ const LibraryConfig = () => {
           </div>
         </div>
       </div>
+
+      {/* Clear API Keys Confirmation Modal */}
+      {showClearConfirmation && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => !clearing && setShowClearConfirmation(false)}>
+          <div className="bg-white rounded-lg p-8 w-full max-w-md border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-center mb-4">
+              <AlertCircle className="h-12 w-12 text-amber-500" />
+            </div>
+            <h3 className="text-xl font-semibold text-slate-900 text-center mb-2">Clear All API Keys?</h3>
+            <p className="text-sm text-slate-600 text-center mb-6">
+              This action will clear the saved API keys for all {configs.length} libraries. This cannot be undone.
+            </p>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowClearConfirmation(false)}
+                disabled={clearing}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white flex items-center justify-center gap-2"
+                onClick={clearAllApiKeys}
+                disabled={clearing}
+              >
+                {clearing ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Clearing...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Yes, Clear All
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Excel Upload Progress Modal */}
       {showExcelModal && (
@@ -900,19 +964,6 @@ const LibraryConfig = () => {
                   Close
                 </Button>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Modal (visual-only) */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowSettingsModal(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-md border border-slate-200" onClick={(e) => e.stopPropagation()}>
-            <h4 className="text-lg font-semibold mb-2">Advanced Filtering</h4>
-            <p className="text-sm text-slate-600 mb-4">This modal is a visual-only mock for future filter options.</p>
-            <div className="flex justify-end">
-              <Button variant="outline" onClick={() => setShowSettingsModal(false)}>Close</Button>
             </div>
           </div>
         </div>
