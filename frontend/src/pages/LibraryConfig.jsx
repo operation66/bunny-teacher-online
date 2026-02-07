@@ -84,8 +84,8 @@ const LibraryConfig = () => {
           text: 'Failed to sync with Bunny.net libraries'
         });
       }
-
-      const handleExcelUpload = async (event) => {
+      
+ const handleExcelUpload = async (event) => {
   const file = event.target.files[0];
   if (!file) return;
 
