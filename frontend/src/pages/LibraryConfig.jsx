@@ -54,6 +54,7 @@ const LibraryConfig = () => {
   // New state for clear API keys confirmation
   const [showClearConfirmation, setShowClearConfirmation] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [clearMode, setClearMode] = useState('all'); // 'all' or 'selected'
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -106,21 +107,33 @@ const LibraryConfig = () => {
     return !!(libraryId && apiKey);
   };
 
-  // Clear all API keys function
+  // Clear API keys function
   const clearAllApiKeys = async () => {
     setClearing(true);
     try {
+      // Determine which libraries to clear
+      const librariesToClear = clearMode === 'selected' 
+        ? configs.filter(cfg => selectedIds.has(cfg.library_id))
+        : configs;
+
       let clearedCount = 0;
       let errorCount = 0;
 
-      // Clear API keys for all configs
-      for (const config of configs) {
+      // Clear API keys for selected configs
+      for (const config of librariesToClear) {
         try {
           await api.put(`/library-configs/${config.library_id}`, {
             stream_api_key: '',
             is_active: false
           });
           clearedCount++;
+          
+          // Update local state immediately
+          setConfigs(prev => prev.map(cfg => 
+            cfg.library_id === config.library_id 
+              ? { ...cfg, stream_api_key: '', is_active: false }
+              : cfg
+          ));
         } catch (error) {
           console.error(`Failed to clear API key for library ${config.library_id}:`, error);
           errorCount++;
@@ -132,16 +145,20 @@ const LibraryConfig = () => {
         text: `Cleared API keys for ${clearedCount} libraries. ${errorCount > 0 ? `Failed: ${errorCount}` : ''}`
       });
 
-      // Refresh the list
-      await fetchConfigs();
+      // Clear selection
+      setSelectedIds(new Set());
       setShowClearConfirmation(false);
+
+      // Small delay to show message before refresh
+      setTimeout(() => {
+        setClearing(false);
+      }, 500);
     } catch (error) {
       console.error('Error clearing API keys:', error);
       setMessage({
         type: 'error',
         text: `Failed to clear API keys: ${error.message}`
       });
-    } finally {
       setClearing(false);
     }
   };
@@ -458,6 +475,16 @@ const LibraryConfig = () => {
     });
   };
 
+  // Toggle select all
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredConfigs.length) {
+      setSelectedIds(new Set());
+    } else {
+      const allIds = new Set(filteredConfigs.map(cfg => cfg.library_id));
+      setSelectedIds(allIds);
+    }
+  };
+
   const progressPercentage = excelProgress.totalRows > 0 
     ? Math.round((excelProgress.processedRows / excelProgress.totalRows) * 100)
     : 0;
@@ -547,8 +574,16 @@ const LibraryConfig = () => {
             className="virtual-scroll border border-slate-200 rounded-lg overflow-auto"
             style={{ maxHeight: '70vh' }}
           >
-            {/* Sticky Header */}
-            <div className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 grid grid-cols-[2fr_1.2fr_0.7fr_0.8fr_80px] px-4 h-10 items-center text-xs font-semibold text-slate-600">
+            {/* Sticky Header with Checkbox */}
+            <div className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 grid grid-cols-[50px_2fr_1.2fr_0.7fr_0.8fr_80px] px-4 h-10 items-center text-xs font-semibold text-slate-600">
+              <div className="flex items-center justify-center">
+                <input 
+                  type="checkbox" 
+                  checked={selectedIds.size === filteredConfigs.length && filteredConfigs.length > 0}
+                  onChange={toggleSelectAll}
+                  title="Select all visible"
+                />
+              </div>
               <div>Config Name</div>
               <div>Endpoint</div>
               <div>Status</div>
@@ -572,16 +607,28 @@ const LibraryConfig = () => {
               return (
                 <React.Fragment key={cfg.library_id}>
                   <div 
-                    className="grid grid-cols-[2fr_1.2fr_0.7fr_0.8fr_80px] items-center px-4 border-b hover:bg-slate-50 h-[60px] cursor-pointer"
-                    onClick={() => setExpandedId(isRowExpanded ? null : cfg.library_id)}
+                    className="grid grid-cols-[50px_2fr_1.2fr_0.7fr_0.8fr_80px] items-center px-4 border-b hover:bg-slate-50 h-[60px]"
                     role="button"
                     tabIndex={0}
                   >
+                    {/* Checkbox Column */}
+                    <div className="flex items-center justify-center">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedIds.has(cfg.library_id)} 
+                        onChange={(e) => { e.stopPropagation(); toggleSelected(cfg.library_id); }}
+                      />
+                    </div>
+                    
                     {/* Config Name */}
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div 
+                      className="flex items-center gap-2 min-w-0 cursor-pointer"
+                      onClick={() => setExpandedId(isRowExpanded ? null : cfg.library_id)}
+                    >
                       <span className="text-indigo-500 text-base">🔗</span>
                       <span className="font-mono text-[15px] font-semibold text-slate-900 truncate" title={cfg.library_name}>{cfg.library_name}</span>
                     </div>
+                    
                     {/* Endpoint */}
                     <div className="min-w-0">
                       <span 
@@ -591,19 +638,22 @@ const LibraryConfig = () => {
                         {endpointFor(cfg)}
                       </span>
                     </div>
+                    
                     {/* Status */}
                     <div>
                       <span className={`inline-flex items-center px-3 py-1 rounded-full text-[12px] font-semibold ${statusStyles(st)}`}>
                         {st}
                       </span>
                     </div>
+                    
                     {/* Last Modified */}
                     <div className="flex items-center gap-2 text-[13px] text-slate-500">
                       <span>🕐</span>
                       <span>{formatTimeAgo(cfg.updated_at)}</span>
                     </div>
+                    
                     {/* Actions */}
-                    <div className="flex items-center justify-center gap-2">
+                    <div className="flex items-center justify-center">
                       <Button 
                         variant="ghost" 
                         size="sm" 
@@ -612,11 +662,6 @@ const LibraryConfig = () => {
                       >
                         {isRowExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                       </Button>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedIds.has(cfg.library_id)} 
-                        onChange={(e) => { e.stopPropagation(); toggleSelected(cfg.library_id); }}
-                      />
                     </div>
                   </div>
 
@@ -817,19 +862,37 @@ const LibraryConfig = () => {
               {/* Clear API Keys Button */}
               <Button 
                 className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 text-white"
-                onClick={() => setShowClearConfirmation(true)}
-                disabled={configs.length === 0}
+                onClick={() => {
+                  setClearMode('all');
+                  setShowClearConfirmation(true);
+                }}
+                disabled={configs.length === 0 || clearing}
               >
                 <Trash2 className="h-4 w-4" />
                 Clear All API Keys
               </Button>
+
+              {/* Clear Selected Button - Only show if there are selections */}
+              {selectedIds.size > 0 && (
+                <Button 
+                  className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+                  onClick={() => {
+                    setClearMode('selected');
+                    setShowClearConfirmation(true);
+                  }}
+                  disabled={clearing}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Clear Selected ({selectedIds.size})
+                </Button>
+              )}
 
               <Button variant="destructive" className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2" disabled={selectedIds.size === 0}>
                 🗑️ Delete Selected
               </Button>
             </div>
             <div className="mt-6 text-sm text-slate-600">
-              <div>Selected: {selectedIds.size}</div>
+              <div>Selected: {selectedIds.size}/{filteredConfigs.length}</div>
             </div>
           </div>
         </div>
@@ -842,9 +905,14 @@ const LibraryConfig = () => {
             <div className="flex items-center justify-center mb-4">
               <AlertCircle className="h-12 w-12 text-amber-500" />
             </div>
-            <h3 className="text-xl font-semibold text-slate-900 text-center mb-2">Clear All API Keys?</h3>
+            <h3 className="text-xl font-semibold text-slate-900 text-center mb-2">
+              Clear {clearMode === 'all' ? 'All' : 'Selected'} API Keys?
+            </h3>
             <p className="text-sm text-slate-600 text-center mb-6">
-              This action will clear the saved API keys for all {configs.length} libraries. This cannot be undone.
+              {clearMode === 'all' 
+                ? `This action will clear the saved API keys for all ${configs.length} libraries. This cannot be undone.`
+                : `This action will clear the saved API keys for ${selectedIds.size} selected ${selectedIds.size === 1 ? 'library' : 'libraries'}. This cannot be undone.`
+              }
             </p>
 
             <div className="flex gap-3">
@@ -869,7 +937,7 @@ const LibraryConfig = () => {
                 ) : (
                   <>
                     <Trash2 className="h-4 w-4" />
-                    Yes, Clear All
+                    Yes, Clear
                   </>
                 )}
               </Button>
