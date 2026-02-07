@@ -36,7 +36,7 @@ const LibraryConfig = () => {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   
-  // NEW: State for the Upload Status Popup
+  // State for the Upload Status Popup
   const [uploadModal, setUploadModal] = useState({ open: false, status: 'idle', message: '' });
 
   const scrollRef = useRef(null);
@@ -125,7 +125,7 @@ const LibraryConfig = () => {
     const file = event.target.files[0];
     if (!file) return;
 
-    // 1. Open the Modal immediately showing "Processing"
+    // Open the Modal immediately showing "Processing"
     setUploadModal({ open: true, status: 'processing', message: 'Reading Excel file...' });
 
     try {
@@ -140,16 +140,18 @@ const LibraryConfig = () => {
 
       let successCount = 0;
       let failCount = 0;
+      let errorDetails = []; // NEW: Store specific error reasons
 
       // Process each row
       for (const row of jsonData) {
-        // Get values from columns (handle different possible column names)
+        // Get values from columns
         const libraryId = row['Library ID'] || row['library_id'] || row['ID'] || row['id'];
         const apiKey = row['API Key'] || row['api_key'] || row['API_KEY'] || row['Stream API Key'];
 
         if (!libraryId || !apiKey) {
           console.warn('Skipping row - missing library ID or API key:', row);
           failCount++;
+          errorDetails.push(`Missing ID or Key in row`);
           continue;
         }
 
@@ -163,14 +165,25 @@ const LibraryConfig = () => {
         } catch (error) {
           console.error(`Failed to update library ${libraryId}:`, error);
           failCount++;
+          // NEW: Capture the error message from the server
+          const errorMessage = error.response?.data?.detail || error.message || 'Unknown error';
+          errorDetails.push(`ID ${libraryId}: ${errorMessage}`);
         }
       }
 
-      // 2. Show Success in Modal
+      // Construct the result message
+      let resultMessage = `Upload Complete!\n\n✅ Success: ${successCount}\n❌ Failed: ${failCount}`;
+      
+      // NEW: If there are failures, list the reasons
+      if (failCount > 0) {
+        resultMessage += `\n\nError Details:\n${errorDetails.join('\n')}`;
+      }
+
+      // Show Success/Result in Modal
       setUploadModal({
         open: true,
-        status: 'success',
-        message: `Upload Complete!\n\n✅ Success: ${successCount}\n❌ Failed: ${failCount}`
+        status: failCount > 0 ? 'partial' : 'success', // Use a different state for mixed results? Or just success.
+        message: resultMessage
       });
 
       // Refresh the list quietly in the background
@@ -178,7 +191,7 @@ const LibraryConfig = () => {
 
     } catch (error) {
       console.error('Error processing Excel file:', error);
-      // 3. Show Error in Modal
+      // Show Error in Modal
       setUploadModal({
         open: true,
         status: 'error',
@@ -186,7 +199,7 @@ const LibraryConfig = () => {
       });
     }
 
-    // Clear the file input so the same file can be selected again if needed
+    // Clear the file input
     event.target.value = '';
   };
 
@@ -690,70 +703,4 @@ const LibraryConfig = () => {
           <div className="bg-white rounded-lg p-6 w-full max-w-md border border-slate-200" onClick={(e) => e.stopPropagation()}>
             <h4 className="text-lg font-semibold mb-2">Advanced Filtering</h4>
             <p className="text-sm text-slate-600 mb-4">This modal is a visual-only mock for future filter options.</p>
-            <div className="flex justify-end">
-              <Button variant="outline" onClick={() => setShowSettingsModal(false)}>Close</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* NEW: Upload Status Modal */}
-      {uploadModal.open && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={(e) => { if (uploadModal.status !== 'processing') setUploadModal({ ...uploadModal, open: false }); }}>
-          <div className="bg-white rounded-lg p-8 w-full max-w-sm text-center shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200" onClick={(e) => e.stopPropagation()}>
-            
-            {/* Processing State */}
-            {uploadModal.status === 'processing' && (
-              <div className="flex flex-col items-center">
-                <div className="h-16 w-16 mb-4 relative flex items-center justify-center">
-                  <div className="absolute inset-0 rounded-full border-4 border-blue-100"></div>
-                  <RefreshCw className="h-8 w-8 text-blue-600 animate-spin" />
-                </div>
-                <h2 className="text-xl font-bold text-slate-900 mb-2">Processing...</h2>
-                <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">{uploadModal.message}</p>
-              </div>
-            )}
-
-            {/* Success State */}
-            {uploadModal.status === 'success' && (
-              <div className="flex flex-col items-center">
-                <div className="h-16 w-16 mb-4 bg-green-100 rounded-full flex items-center justify-center">
-                  <CheckCircle className="h-8 w-8 text-green-600" />
-                </div>
-                <h2 className="text-xl font-bold text-slate-900 mb-2">Success!</h2>
-                <p className="text-slate-600 text-sm mb-6 leading-relaxed whitespace-pre-line">{uploadModal.message}</p>
-                <Button 
-                  onClick={() => setUploadModal({ ...uploadModal, open: false })} 
-                  className="bg-green-600 hover:bg-green-700 w-full"
-                >
-                  Close
-                </Button>
-              </div>
-            )}
-
-            {/* Error State */}
-            {uploadModal.status === 'error' && (
-              <div className="flex flex-col items-center">
-                <div className="h-16 w-16 mb-4 bg-red-100 rounded-full flex items-center justify-center">
-                  <XCircle className="h-8 w-8 text-red-600" />
-                </div>
-                <h2 className="text-xl font-bold text-slate-900 mb-2">Error</h2>
-                <p className="text-slate-600 text-sm mb-6 leading-relaxed whitespace-pre-line">{uploadModal.message}</p>
-                <Button 
-                  onClick={() => setUploadModal({ ...uploadModal, open: false })} 
-                  variant="outline"
-                  className="w-full"
-                >
-                  Close
-                </Button>
-              </div>
-            )}
-
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default LibraryConfig;
+            <div className="flex justify-end
