@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import api from '../services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -84,6 +85,68 @@ const LibraryConfig = () => {
         });
       }
 
+      const handleExcelUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+    // Read the Excel file
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data);
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    setMessage({ type: 'info', text: 'Processing Excel file...' });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    // Process each row
+    for (const row of jsonData) {
+      // Get values from columns (handle different possible column names)
+      const libraryId = row['Library ID'] || row['library_id'] || row['ID'] || row['id'];
+      const apiKey = row['API Key'] || row['api_key'] || row['API_KEY'] || row['Stream API Key'];
+
+      if (!libraryId || !apiKey) {
+        console.warn('Skipping row - missing library ID or API key:', row);
+        failCount++;
+        continue;
+      }
+
+      try {
+        // Update the library config
+        await api.put(`/library-configs/${libraryId}`, {
+          stream_api_key: apiKey,
+          is_active: true
+        });
+        successCount++;
+      } catch (error) {
+        console.error(`Failed to update library ${libraryId}:`, error);
+        failCount++;
+      }
+    }
+
+    // Show success message
+    setMessage({
+      type: 'success',
+      text: `Excel upload complete! Updated ${successCount} libraries. ${failCount > 0 ? `Failed: ${failCount}` : ''}`
+    });
+
+    // Refresh the list
+    await fetchConfigs();
+
+  } catch (error) {
+    console.error('Error processing Excel file:', error);
+    setMessage({
+      type: 'error',
+      text: `Failed to process Excel file: ${error.message}`
+    });
+  }
+
+  // Clear the file input
+  event.target.value = '';
+};
+      
       // Get authoritative list of live Bunny libraries
       let liveIds = [];
       try {
@@ -583,9 +646,19 @@ const LibraryConfig = () => {
           <div className="bg-[#f8fafc] p-6 border border-slate-200 rounded-xl">
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Quick Actions & Info</h3>
             <div className="space-y-3">
-              <Button className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center gap-2" disabled>
-                ➕ Add New Config
-              </Button>
+{/* Excel Upload Button */}
+<div className="relative">
+  <input
+    type="file"
+    accept=".xlsx,.xls"
+    onChange={handleExcelUpload}
+    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+    id="excel-upload"
+  />
+  <Button className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white">
+    📤 Upload Excel (API Keys)
+  </Button>
+</div>
               <Button variant="outline" className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center gap-2" disabled>
                 📋 Bulk Edit
               </Button>
