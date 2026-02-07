@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import api from '../services/api';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
@@ -9,13 +9,10 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { 
   RefreshCw, 
   Save, 
-  Key, 
   Database,
   Settings,
   CheckCircle,
   XCircle,
-  Eye,
-  EyeOff,
   Search,
   ChevronDown,
   ChevronRight
@@ -72,7 +69,6 @@ const LibraryConfig = () => {
     setMessage({ type: '', text: '' });
     
     try {
-      // First, ensure configs are synced with live Bunny libraries
       try {
         const { data: syncData } = await api.post('/library-configs/sync-from-bunny/');
         if (syncData) {
@@ -89,7 +85,6 @@ const LibraryConfig = () => {
         });
       }
       
-      // Get authoritative list of live Bunny libraries
       let liveIds = [];
       try {
         const { data: liveData } = await api.get('/bunny-libraries/');
@@ -98,7 +93,6 @@ const LibraryConfig = () => {
         console.warn('Failed to fetch live Bunny libraries:', liveErr);
       }
 
-      // Then fetch all configs
       const { data } = await api.get('/library-configs/');
       const filtered = liveIds.length > 0
         ? data.filter(cfg => liveIds.includes(cfg.library_id))
@@ -125,7 +119,7 @@ const LibraryConfig = () => {
     const file = event.target.files[0];
     if (!file) return;
 
-    // Open the Modal immediately showing "Processing"
+    // 1. Open the Modal immediately showing "Processing"
     setUploadModal({ open: true, status: 'processing', message: 'Reading Excel file...' });
 
     try {
@@ -140,7 +134,7 @@ const LibraryConfig = () => {
 
       let successCount = 0;
       let failCount = 0;
-      let errorDetails = []; // NEW: Store specific error reasons
+      let errorDetails = [];
 
       // Process each row
       for (const row of jsonData) {
@@ -165,7 +159,7 @@ const LibraryConfig = () => {
         } catch (error) {
           console.error(`Failed to update library ${libraryId}:`, error);
           failCount++;
-          // NEW: Capture the error message from the server
+          // Capture the error message from the server
           const errorMessage = error.response?.data?.detail || error.message || 'Unknown error';
           errorDetails.push(`ID ${libraryId}: ${errorMessage}`);
         }
@@ -174,15 +168,16 @@ const LibraryConfig = () => {
       // Construct the result message
       let resultMessage = `Upload Complete!\n\n✅ Success: ${successCount}\n❌ Failed: ${failCount}`;
       
-      // NEW: If there are failures, list the reasons
+      // If there are failures, list the reasons
       if (failCount > 0) {
         resultMessage += `\n\nError Details:\n${errorDetails.join('\n')}`;
       }
 
       // Show Success/Result in Modal
+      const finalStatus = failCount > 0 ? 'partial' : 'success';
       setUploadModal({
         open: true,
-        status: failCount > 0 ? 'partial' : 'success', // Use a different state for mixed results? Or just success.
+        status: finalStatus,
         message: resultMessage
       });
 
@@ -216,7 +211,6 @@ const LibraryConfig = () => {
         config.library_id === libraryId ? updatedConfig : config
       ));
       
-      // Clear pending changes
       setPendingChanges(prev => {
         const newChanges = { ...prev };
         delete newChanges[libraryId];
@@ -549,7 +543,7 @@ const LibraryConfig = () => {
                               )}
                             </div>
                             {!isConfigured(cfg) && (
-                              <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+                              <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block mt-2">
                                 Add an API key to activate this library.
                               </div>
                             )}
@@ -698,9 +692,3 @@ const LibraryConfig = () => {
       </div>
 
       {/* Settings Modal (visual-only) */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowSettingsModal(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-md border border-slate-200" onClick={(e) => e.stopPropagation()}>
-            <h4 className="text-lg font-semibold mb-2">Advanced Filtering</h4>
-            <p className="text-sm text-slate-600 mb-4">This modal is a visual-only mock for future filter options.</p>
-            <div className="flex justify-end
