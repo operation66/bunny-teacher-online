@@ -203,7 +203,7 @@ const LibraryConfig = () => {
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const endpointFor = (cfg) => `https://video.bunnycdn.com/library/${cfg.library_id}/videos`;
+  const endpointFor = (cfg) => `https://dash.bunny.net/stream/{library_id}/library/videos`;
   const isConfigured = (cfg) => !!(cfg.stream_api_key && String(cfg.stream_api_key).trim().length > 0);
   const statusFor = (cfg) => (hasPendingChanges(cfg.library_id) ? 'Pending' : (isConfigured(cfg) ? 'Active' : 'Inactive'));
   const statusStyles = (st) => {
@@ -335,7 +335,7 @@ const LibraryConfig = () => {
             style={{ maxHeight: '70vh' }}
           >
             {/* Sticky Header */}
-            <div className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 grid grid-cols-[1fr_1.2fr_0.7fr_0.8fr_80px] px-4 h-10 items-center text-xs font-semibold text-slate-600">
+            <div className="sticky top-0 z-10 bg-slate-50 border-b border-slate-200 grid grid-cols-[2fr_1.2fr_0.7fr_0.8fr_80px] px-4 h-10 items-center text-xs font-semibold text-slate-600">
               <div>Config Name</div>
               <div>Endpoint</div>
               <div>Status</div>
@@ -359,7 +359,7 @@ const LibraryConfig = () => {
               return (
                 <React.Fragment key={cfg.library_id}>
                   <div 
-                    className="grid grid-cols-[1fr_1.2fr_0.7fr_0.8fr_80px] items-center px-4 border-b hover:bg-slate-50 h-[60px] cursor-pointer"
+                    className="grid grid-cols-[2fr_1.2fr_0.7fr_0.8fr_80px] items-center px-4 border-b hover:bg-slate-50 h-[60px] cursor-pointer"
                     onClick={() => setExpandedId(isRowExpanded ? null : cfg.library_id)}
                     role="button"
                     tabIndex={0}
