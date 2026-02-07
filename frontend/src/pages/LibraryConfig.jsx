@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import api from '../services/api';
-import { Card, CardContent } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
@@ -9,13 +9,18 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { 
   RefreshCw, 
   Save, 
+  Key, 
   Database,
   Settings,
   CheckCircle,
   XCircle,
+  Eye,
+  EyeOff,
   Search,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  AlertCircle,
+  Loader
 } from 'lucide-react';
 
 const LibraryConfig = () => {
@@ -32,13 +37,21 @@ const LibraryConfig = () => {
   const [typeFilter, setTypeFilter] = useState('All Configs');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  
-  // State for the Upload Status Popup
-  const [uploadModal, setUploadModal] = useState({ open: false, status: 'idle', message: '' });
-
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
   const [atBottom, setAtBottom] = useState(false);
+  
+  // New state for Excel upload progress
+  const [showExcelModal, setShowExcelModal] = useState(false);
+  const [excelProgress, setExcelProgress] = useState({
+    isProcessing: false,
+    totalRows: 0,
+    processedRows: 0,
+    successCount: 0,
+    failCount: 0,
+    failedRows: [],
+    isComplete: false
+  });
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -64,11 +77,193 @@ const LibraryConfig = () => {
     setFilteredConfigs(filtered);
   }, [configs, searchTerm, activeOnly]);
 
+  // Helper function to check if a row is empty
+  const isRowEmpty = (row) => {
+    if (!row || typeof row !== 'object') return true;
+    return Object.values(row).every(value => {
+      if (value === null || value === undefined) return true;
+      if (typeof value === 'string' && value.trim() === '') return true;
+      return false;
+    });
+  };
+
+  // Helper function to get library ID from row
+  const getLibraryId = (row) => {
+    return row['Library ID'] || row['library_id'] || row['ID'] || row['id'];
+  };
+
+  // Helper function to get API key from row
+  const getApiKey = (row) => {
+    return row['API Key'] || row['api_key'] || row['API_KEY'] || row['Stream API Key'];
+  };
+
+  // Helper function to check if row has valid data
+  const isRowValid = (row) => {
+    const libraryId = getLibraryId(row);
+    const apiKey = getApiKey(row);
+    return !!(libraryId && apiKey);
+  };
+
+  const handleExcelUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+      // Reset progress state
+      setExcelProgress({
+        isProcessing: true,
+        totalRows: 0,
+        processedRows: 0,
+        successCount: 0,
+        failCount: 0,
+        failedRows: [],
+        isComplete: false
+      });
+      setShowExcelModal(true);
+
+      // Read the Excel file
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+      // Filter out empty rows
+      const validDataRows = jsonData.filter(row => !isRowEmpty(row));
+
+      // Update total rows (only valid rows count)
+      setExcelProgress(prev => ({
+        ...prev,
+        totalRows: validDataRows.length
+      }));
+
+      let successCount = 0;
+      let failCount = 0;
+      let failedRows = [];
+
+      // Process each valid row
+      for (let index = 0; index < validDataRows.length; index++) {
+        const row = validDataRows[index];
+        
+        // Get values from columns
+        const libraryId = getLibraryId(row);
+        const apiKey = getApiKey(row);
+
+        // Check if row has required fields
+        if (!libraryId || !apiKey) {
+          console.warn('Skipping row - missing library ID or API key:', row);
+          failCount++;
+          
+          // Find the original row number in the Excel file (accounting for header and empty rows)
+          const originalRowNumber = jsonData.indexOf(row) + 2; // +2 for header and 0-indexing
+          
+          failedRows.push({
+            rowNumber: originalRowNumber,
+            libraryId: libraryId || 'N/A',
+            reason: 'Missing Library ID or API Key'
+          });
+          
+          // Update progress
+          setExcelProgress(prev => ({
+            ...prev,
+            processedRows: index + 1,
+            failCount: failCount,
+            failedRows: failedRows
+          }));
+          continue;
+        }
+
+        try {
+          // Update the library config
+          await api.put(`/library-configs/${libraryId}`, {
+            stream_api_key: apiKey,
+            is_active: true
+          });
+          successCount++;
+          
+          // Update progress
+          setExcelProgress(prev => ({
+            ...prev,
+            processedRows: index + 1,
+            successCount: successCount
+          }));
+        } catch (error) {
+          console.error(`Failed to update library ${libraryId}:`, error);
+          failCount++;
+          
+          const originalRowNumber = jsonData.indexOf(row) + 2;
+          
+          failedRows.push({
+            rowNumber: originalRowNumber,
+            libraryId: libraryId,
+            reason: error.response?.data?.detail || error.message || 'Unknown error'
+          });
+          
+          // Update progress
+          setExcelProgress(prev => ({
+            ...prev,
+            processedRows: index + 1,
+            failCount: failCount,
+            failedRows: failedRows
+          }));
+        }
+      }
+
+      // Mark as complete
+      setExcelProgress(prev => ({
+        ...prev,
+        isProcessing: false,
+        isComplete: true
+      }));
+
+      setMessage({
+        type: 'success',
+        text: `Excel upload complete! Updated ${successCount} libraries. ${failCount > 0 ? `Failed: ${failCount}` : ''}`
+      });
+
+      // Refresh the list after a short delay
+      setTimeout(() => {
+        fetchConfigs();
+      }, 1000);
+
+    } catch (error) {
+      console.error('Error processing Excel file:', error);
+      setExcelProgress(prev => ({
+        ...prev,
+        isProcessing: false,
+        isComplete: true
+      }));
+      setMessage({
+        type: 'error',
+        text: `Failed to process Excel file: ${error.message}`
+      });
+    }
+
+    // Clear the file input
+    event.target.value = '';
+  };
+
+  const closeExcelModal = () => {
+    if (!excelProgress.isProcessing) {
+      setShowExcelModal(false);
+      // Reset progress
+      setExcelProgress({
+        isProcessing: false,
+        totalRows: 0,
+        processedRows: 0,
+        successCount: 0,
+        failCount: 0,
+        failedRows: [],
+        isComplete: false
+      });
+    }
+  };
+
   const fetchConfigs = async () => {
     setLoading(true);
     setMessage({ type: '', text: '' });
     
     try {
+      // First, ensure configs are synced with live Bunny libraries
       try {
         const { data: syncData } = await api.post('/library-configs/sync-from-bunny/');
         if (syncData) {
@@ -85,6 +280,7 @@ const LibraryConfig = () => {
         });
       }
       
+      // Get authoritative list of live Bunny libraries
       let liveIds = [];
       try {
         const { data: liveData } = await api.get('/bunny-libraries/');
@@ -93,6 +289,7 @@ const LibraryConfig = () => {
         console.warn('Failed to fetch live Bunny libraries:', liveErr);
       }
 
+      // Then fetch all configs
       const { data } = await api.get('/library-configs/');
       const filtered = liveIds.length > 0
         ? data.filter(cfg => liveIds.includes(cfg.library_id))
@@ -115,89 +312,6 @@ const LibraryConfig = () => {
     }
   };
 
-  const handleExcelUpload = async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    // 1. Open the Modal immediately showing "Processing"
-    setUploadModal({ open: true, status: 'processing', message: 'Reading Excel file...' });
-
-    try {
-      // Read the Excel file
-      const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data);
-      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-      // Update modal text
-      setUploadModal(prev => ({ ...prev, message: `Found ${jsonData.length} rows. Updating libraries...` }));
-
-      let successCount = 0;
-      let failCount = 0;
-      let errorDetails = [];
-
-      // Process each row
-      for (const row of jsonData) {
-        // Get values from columns
-        const libraryId = row['Library ID'] || row['library_id'] || row['ID'] || row['id'];
-        const apiKey = row['API Key'] || row['api_key'] || row['API_KEY'] || row['Stream API Key'];
-
-        if (!libraryId || !apiKey) {
-          console.warn('Skipping row - missing library ID or API key:', row);
-          failCount++;
-          errorDetails.push(`Missing ID or Key in row`);
-          continue;
-        }
-
-        try {
-          // Update the library config
-          await api.put(`/library-configs/${libraryId}`, {
-            stream_api_key: apiKey,
-            is_active: true
-          });
-          successCount++;
-        } catch (error) {
-          console.error(`Failed to update library ${libraryId}:`, error);
-          failCount++;
-          // Capture the error message from the server
-          const errorMessage = error.response?.data?.detail || error.message || 'Unknown error';
-          errorDetails.push(`ID ${libraryId}: ${errorMessage}`);
-        }
-      }
-
-      // Construct the result message
-      let resultMessage = `Upload Complete!\n\n✅ Success: ${successCount}\n❌ Failed: ${failCount}`;
-      
-      // If there are failures, list the reasons
-      if (failCount > 0) {
-        resultMessage += `\n\nError Details:\n${errorDetails.join('\n')}`;
-      }
-
-      // Show Success/Result in Modal
-      const finalStatus = failCount > 0 ? 'partial' : 'success';
-      setUploadModal({
-        open: true,
-        status: finalStatus,
-        message: resultMessage
-      });
-
-      // Refresh the list quietly in the background
-      await fetchConfigs();
-
-    } catch (error) {
-      console.error('Error processing Excel file:', error);
-      // Show Error in Modal
-      setUploadModal({
-        open: true,
-        status: 'error',
-        message: `Error processing Excel file: ${error.message}`
-      });
-    }
-
-    // Clear the file input
-    event.target.value = '';
-  };
-
   const saveConfig = async (libraryId) => {
     const changes = pendingChanges[libraryId];
     if (!changes) return;
@@ -211,6 +325,7 @@ const LibraryConfig = () => {
         config.library_id === libraryId ? updatedConfig : config
       ));
       
+      // Clear pending changes
       setPendingChanges(prev => {
         const newChanges = { ...prev };
         delete newChanges[libraryId];
@@ -226,7 +341,7 @@ const LibraryConfig = () => {
       console.error('Error saving config:', error);
       setMessage({ 
         type: 'error', 
-        text: `Failed to save configuration: ${error.response?.data?.detail || error.message}`
+        text: `Failed to save configuration: ${error.response?.data?.detail || error.message}` 
       });
     } finally {
       setSaving(prev => ({ ...prev, [libraryId]: false }));
@@ -304,6 +419,10 @@ const LibraryConfig = () => {
       return next;
     });
   };
+
+  const progressPercentage = excelProgress.totalRows > 0 
+    ? Math.round((excelProgress.processedRows / excelProgress.totalRows) * 100)
+    : 0;
   
   return (
     <div className="container mx-auto p-6 max-w-7xl">
@@ -543,7 +662,7 @@ const LibraryConfig = () => {
                               )}
                             </div>
                             {!isConfigured(cfg) && (
-                              <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block mt-2">
+                              <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
                                 Add an API key to activate this library.
                               </div>
                             )}
@@ -672,8 +791,12 @@ const LibraryConfig = () => {
                   onChange={handleExcelUpload}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   id="excel-upload"
+                  disabled={excelProgress.isProcessing}
                 />
-                <Button className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white">
+                <Button 
+                  className="w-full h-[42px] rounded-lg text-[14px] font-medium flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                  disabled={excelProgress.isProcessing}
+                >
                   📤 Upload Excel (API Keys)
                 </Button>
               </div>
@@ -691,4 +814,111 @@ const LibraryConfig = () => {
         </div>
       </div>
 
+      {/* Excel Upload Progress Modal */}
+      {showExcelModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={closeExcelModal}>
+          <div className="bg-white rounded-lg p-8 w-full max-w-md border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center">
+              {excelProgress.isProcessing ? (
+                <>
+                  <div className="flex justify-center mb-4">
+                    <Loader className="h-12 w-12 text-indigo-600 animate-spin" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-slate-900 mb-2">Processing Excel File</h3>
+                  <p className="text-sm text-slate-600 mb-6">
+                    Please wait while we process your file...
+                  </p>
+                </>
+              ) : (
+                <>
+                  {excelProgress.failCount === 0 ? (
+                    <>
+                      <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
+                      <h3 className="text-xl font-semibold text-slate-900 mb-2">Upload Complete!</h3>
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+                      <h3 className="text-xl font-semibold text-slate-900 mb-2">Upload Complete (With Issues)</h3>
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Progress Bar */}
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-slate-700">Progress</span>
+                  <span className="text-sm font-semibold text-indigo-600">{progressPercentage}%</span>
+                </div>
+                <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-indigo-600 transition-all duration-300"
+                    style={{ width: `${progressPercentage}%` }}
+                  ></div>
+                </div>
+              </div>
+
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="rounded-lg bg-blue-50 p-3">
+                  <div className="text-2xl font-bold text-blue-600">{excelProgress.processedRows}</div>
+                  <div className="text-xs text-slate-600">Processed</div>
+                </div>
+                <div className="rounded-lg bg-green-50 p-3">
+                  <div className="text-2xl font-bold text-green-600">{excelProgress.successCount}</div>
+                  <div className="text-xs text-slate-600">Success</div>
+                </div>
+                <div className="rounded-lg bg-red-50 p-3">
+                  <div className="text-2xl font-bold text-red-600">{excelProgress.failCount}</div>
+                  <div className="text-xs text-slate-600">Failed</div>
+                </div>
+              </div>
+
+              {/* Failed Rows */}
+              {excelProgress.failedRows.length > 0 && (
+                <div className="mb-6 max-h-[200px] overflow-y-auto">
+                  <div className="text-left bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-xs font-semibold text-red-700 mb-2">Failed Rows:</p>
+                    <div className="space-y-1">
+                      {excelProgress.failedRows.map((failedRow, idx) => (
+                        <div key={idx} className="text-xs text-red-600">
+                          <span className="font-semibold">Row {failedRow.rowNumber}</span> - {failedRow.libraryId}: {failedRow.reason}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Close Button */}
+              {!excelProgress.isProcessing && (
+                <Button 
+                  onClick={closeExcelModal}
+                  className={`w-full ${excelProgress.failCount === 0 ? 'bg-green-600 hover:bg-green-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+                >
+                  Close
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Modal (visual-only) */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setShowSettingsModal(false)}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-md border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-lg font-semibold mb-2">Advanced Filtering</h4>
+            <p className="text-sm text-slate-600 mb-4">This modal is a visual-only mock for future filter options.</p>
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => setShowSettingsModal(false)}>Close</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default LibraryConfig;
