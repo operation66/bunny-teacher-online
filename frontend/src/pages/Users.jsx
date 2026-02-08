@@ -12,23 +12,32 @@ const UsersPageInner = () => {
   const [selected, setSelected] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-
-  const pageOptions = useMemo(() => PAGES, []);
-
+  
+  // Add Users page to the available options
+  const pageOptions = useMemo(() => {
+    const allPages = [...PAGES];
+    // Check if Users page already exists
+    if (!allPages.find(p => p.key === '/users')) {
+      allPages.push({ key: '/users', label: 'Users' });
+    }
+    return allPages;
+  }, []);
+  
   const load = async () => {
     try { setUsers(await usersApi.list()); } catch (e) { /* ignore */ }
   };
+  
   useEffect(() => { load(); }, []);
-
+  
   const toggle = (key) => {
     setSelected((prev) => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
-
+  
   const genPassword = () => {
     const p = Math.random().toString(36).slice(-10);
     setPassword(p);
   };
-
+  
   const createUser = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -41,7 +50,7 @@ const UsersPageInner = () => {
       setError(err?.response?.data?.detail || 'Failed to create user');
     }
   };
-
+  
   return (
     <div className="max-w-3xl mx-auto mt-8 space-y-8">
       <Card>
@@ -78,7 +87,6 @@ const UsersPageInner = () => {
           </form>
         </CardContent>
       </Card>
-
       <Card>
         <CardHeader>
           <CardTitle>Existing Users</CardTitle>
