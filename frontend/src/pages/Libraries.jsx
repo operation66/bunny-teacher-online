@@ -27,7 +27,9 @@ import {
   Globe,
   Users,
   Play,
-  Layers
+  Layers,
+  Hash,
+  X
 } from 'lucide-react';
 
 const Libraries = () => {
@@ -47,15 +49,23 @@ const Libraries = () => {
     statsCount: true
   });
 
-  // Visual-only virtual scrolling cues
+  // EDIT 3C: Watch time format state per library
+  const [watchTimeFormats, setWatchTimeFormats] = useState({});
+
+  // EDIT 4: Selection and export modal states
+  const [selectedLibraries, setSelectedLibraries] = useState(new Set());
+  const [showExportModal, setShowExportModal] = useState(false);
+
   const scrollRef = React.useRef(null);
   const [atTop, setAtTop] = useState(true);
   const [atBottom, setAtBottom] = useState(false);
+  
   const handleScroll = (e) => {
     const el = e.currentTarget;
     setAtTop(el.scrollTop <= 0);
     setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
   };
+  
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -68,142 +78,129 @@ const Libraries = () => {
     setTimeout(() => setMessage({ text: '', type: '' }), 5000);
   };
 
-  // Simple in-memory cache to avoid refetching base list unnecessarily
   const baseCacheRef = React.useRef(null);
 
-const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
-  setLoading(true);
-  try {
-    // Optional: force reload base libraries when user explicitly refreshes
-    if (forceReload) {
-      baseCacheRef.current = null;
-    }
-    
-    // 1) Base libraries from Bunny.net (use cached if available and not forcing names change)
-    let baseData = baseCacheRef.current;
-    if (!baseData) {
-      const { data: baseDataResp } = await api.get('/bunny-libraries/');
-      baseData = baseDataResp;
-      baseCacheRef.current = baseData;
-    }
-
-    const baseMap = new Map();
-    baseData.forEach(lib => {
-      baseMap.set(lib.id, {
-        library_id: lib.id,
-        library_name: lib.name,
-        has_stats: false,
-        monthly_data: [],
-        last_updated: null,
-        video_views: lib.video_views || 0,
-        total_watch_time_seconds: lib.total_watch_time_seconds || 0
-      });
-    });
-
-    // 1a) Optional: Load LibraryConfig names to override/fill missing names
-    let configMap = new Map();
+  const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
+    setLoading(true);
     try {
-      const { data: cfgData } = await api.get('/library-configs/');
-      (Array.isArray(cfgData) ? cfgData : []).forEach(cfg => {
-        if (cfg && cfg.library_id != null && cfg.library_name) {
-          configMap.set(cfg.library_id, cfg.library_name);
-        }
-      });
-    } catch (_) {
-      // Non-fatal; continue without config overrides
-    }
+      if (forceReload) {
+        baseCacheRef.current = null;
+      }
+      
+      let baseData = baseCacheRef.current;
+      if (!baseData) {
+        const { data: baseDataResp } = await api.get('/bunny-libraries/');
+        baseData = baseDataResp;
+        baseCacheRef.current = baseData;
+      }
 
-    // Apply config name overrides to base entries
-    if (configMap.size > 0) {
-      for (const [id, entry] of baseMap.entries()) {
-        const cfgName = configMap.get(id);
-        if (cfgName && cfgName !== entry.library_name) {
-          entry.library_name = cfgName;
+      const baseMap = new Map();
+      baseData.forEach(lib => {
+        baseMap.set(lib.id, {
+          library_id: lib.id,
+          library_name: lib.name,
+          has_stats: false,
+          monthly_data: [],
+          last_updated: null,
+          video_views: lib.video_views || 0,
+          total_watch_time_seconds: lib.total_watch_time_seconds || 0
+        });
+      });
+
+      let configMap = new Map();
+      try {
+        const { data: cfgData } = await api.get('/library-configs/');
+        (Array.isArray(cfgData) ? cfgData : []).forEach(cfg => {
+          if (cfg && cfg.library_id != null && cfg.library_name) {
+            configMap.set(cfg.library_id, cfg.library_name);
+          }
+        });
+      } catch (_) {}
+
+      if (configMap.size > 0) {
+        for (const [id, entry] of baseMap.entries()) {
+          const cfgName = configMap.get(id);
+          if (cfgName && cfgName !== entry.library_name) {
+            entry.library_name = cfgName;
+          }
         }
       }
-    }
 
-    // 2) Historical stats synced via backend
-    let statsData = [];
-    try {
-      const { data: histData } = await api.get('/historical-stats/libraries/', {
-        params: { with_stats_only: withStatsOnly }
-      });
-      statsData = histData || [];
-    } catch (innerErr) {
-      console.warn('Unable to load historical stats:', innerErr);
-    }
+      let statsData = [];
+      try {
+        const { data: histData } = await api.get('/historical-stats/libraries/', {
+          params: { with_stats_only: withStatsOnly }
+        });
+        statsData = histData || [];
+      } catch (innerErr) {
+        console.warn('Unable to load historical stats:', innerErr);
+      }
 
-    // 3) Merge stats into base
-    statsData.forEach(statLib => {
-      const id = statLib.library_id ?? statLib.id;
-      const base = baseMap.get(id);
-      if (base) {
-        base.has_stats = Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0;
-        base.monthly_data = statLib.monthly_data || [];
-        base.last_updated = statLib.last_updated || base.last_updated;
-        // Preserve proper name if backend returned a better one
-        const cfgName = configMap.get(id);
-        if (cfgName && cfgName !== base.library_name) {
-          base.library_name = cfgName;
-        } else if (statLib.library_name && statLib.library_name !== base.library_name) {
-          base.library_name = statLib.library_name;
+      statsData.forEach(statLib => {
+        const id = statLib.library_id ?? statLib.id;
+        const base = baseMap.get(id);
+        if (base) {
+          base.has_stats = Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0;
+          base.monthly_data = statLib.monthly_data || [];
+          base.last_updated = statLib.last_updated || base.last_updated;
+          const cfgName = configMap.get(id);
+          if (cfgName && cfgName !== base.library_name) {
+            base.library_name = cfgName;
+          } else if (statLib.library_name && statLib.library_name !== base.library_name) {
+            base.library_name = statLib.library_name;
+          }
+        } else {
+          baseMap.set(id, {
+            library_id: id,
+            library_name: configMap.get(id) || statLib.library_name || `Library ${id}`,
+            has_stats: Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0,
+            monthly_data: statLib.monthly_data || [],
+            last_updated: statLib.last_updated || null,
+            video_views: 0,
+            total_watch_time_seconds: 0,
+          });
         }
-      } else {
-        // Stats exist for a library not returned by base list; include it
-        baseMap.set(id, {
-          library_id: id,
-          library_name: configMap.get(id) || statLib.library_name || `Library ${id}`,
-          has_stats: Array.isArray(statLib.monthly_data) && statLib.monthly_data.length > 0,
-          monthly_data: statLib.monthly_data || [],
-          last_updated: statLib.last_updated || null,
+      });
+
+      const merged = Array.from(baseMap.values());
+      setLibraries(merged);
+
+      const withStatsCount = merged.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
+      const modeNote = withStatsOnly ? ' (synced only)' : '';
+      showMessage(
+        `Loaded ${merged.length} libraries; ${withStatsCount} with synced stats${modeNote}`,
+        'success'
+      );
+    } catch (error) {
+      console.error('Error fetching libraries:', error);
+      try {
+        const { data: histData } = await api.get('/historical-stats/libraries/', {
+          params: { with_stats_only: withStatsOnly }
+        });
+        const normalized = (Array.isArray(histData) ? histData : []).map((lib) => ({
+          library_id: lib.library_id ?? lib.id,
+          library_name: lib.library_name ?? lib.name ?? `Library ${lib.library_id ?? lib.id}`,
+          has_stats: Array.isArray(lib.monthly_data) && lib.monthly_data.length > 0,
+          monthly_data: lib.monthly_data ?? [],
+          last_updated: lib.last_updated ?? null,
           video_views: 0,
           total_watch_time_seconds: 0,
-        });
+        }));
+        setLibraries(normalized);
+        const withStatsCount = normalized.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
+        const modeNote = withStatsOnly ? ' (synced only)' : '';
+        showMessage(`Loaded ${normalized.length} libraries from historical stats; ${withStatsCount} with synced stats${modeNote}`, 'success');
+      } catch (fallbackErr) {
+        console.warn('Historical stats fallback failed:', fallbackErr);
+        setLibraries([]);
+        showMessage(`Backend connection failed. Please ensure the API server is running.`, 'error');
       }
-    });
-
-    const merged = Array.from(baseMap.values());
-    setLibraries(merged);
-
-    const withStatsCount = merged.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
-    const modeNote = withStatsOnly ? ' (synced only)' : '';
-    showMessage(
-      `Loaded ${merged.length} libraries; ${withStatsCount} with synced stats${modeNote}`,
-      'success'
-    );
-  } catch (error) {
-    console.error('Error fetching libraries:', error);
-    // Fallback: try historical stats endpoint to at least render synced libraries
-    try {
-      const { data: histData } = await api.get('/historical-stats/libraries/', {
-        params: { with_stats_only: withStatsOnly }
-      });
-      const normalized = (Array.isArray(histData) ? histData : []).map((lib) => ({
-        library_id: lib.library_id ?? lib.id,
-        library_name: lib.library_name ?? lib.name ?? `Library ${lib.library_id ?? lib.id}`,
-        has_stats: Array.isArray(lib.monthly_data) && lib.monthly_data.length > 0,
-        monthly_data: lib.monthly_data ?? [],
-        last_updated: lib.last_updated ?? null,
-        video_views: 0,
-        total_watch_time_seconds: 0,
-      }));
-      setLibraries(normalized);
-      const withStatsCount = normalized.filter(l => l.has_stats && (l.monthly_data?.length || 0) > 0).length;
-      const modeNote = withStatsOnly ? ' (synced only)' : '';
-      showMessage(`Loaded ${normalized.length} libraries from historical stats; ${withStatsCount} with synced stats${modeNote}`, 'success');
-    } catch (fallbackErr) {
-      console.warn('Historical stats fallback failed:', fallbackErr);
-      setLibraries([]);
-      showMessage(`Backend connection failed. Please ensure the API server is running.`, 'error');
+    } finally {
+      setLoading(false);
     }
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   useEffect(() => {
-    // Refetch when the analytics-only toggle changes
     fetchLibrariesWithHistory(showOnlyWithStats);
   }, [showOnlyWithStats]);
 
@@ -219,19 +216,49 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
     });
   };
 
+  // EDIT 4B: Toggle library selection
+  const toggleLibrarySelection = (libraryId, event) => {
+    event.stopPropagation();
+    setSelectedLibraries(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(libraryId)) {
+        newSet.delete(libraryId);
+      } else {
+        newSet.add(libraryId);
+      }
+      return newSet;
+    });
+  };
+
   const formatNumber = (num) => {
     if (num === null || num === undefined) return 'N/A';
     return new Intl.NumberFormat().format(num);
   };
 
-const formatWatchTime = (seconds) => {
-  if (!seconds && seconds !== 0) return 'N/A';
-  const hours = Math.floor(seconds / 3600);
-  const remainingSeconds = seconds % 3600;
-  return `${hours.toLocaleString()}h ${remainingSeconds}s`;
-};
-   
-  // Bandwidth display removed per request
+  // EDIT 3C: Updated formatWatchTime with format parameter
+  const formatWatchTime = (seconds, format = 'minutes') => {
+    if (!seconds && seconds !== 0) return 'N/A';
+    
+    if (format === 'hms') {
+      // Hours:Minutes:Seconds format
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${hours}h ${minutes}m ${secs}s`;
+    } else {
+      // Default: total minutes
+      const totalMinutes = Math.round(seconds / 60);
+      return `${totalMinutes.toLocaleString()} min`;
+    }
+  };
+
+  // EDIT 3C: Toggle watch time format for a library
+  const toggleWatchTimeFormat = (libraryId) => {
+    setWatchTimeFormats(prev => ({
+      ...prev,
+      [libraryId]: prev[libraryId] === 'hms' ? 'minutes' : 'hms'
+    }));
+  };
 
   const getMonthName = (month) => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -277,9 +304,25 @@ const formatWatchTime = (seconds) => {
       });
   }, [libraries, searchTerm, sortBy, sortOrder, showOnlyWithStats]);
 
-  const exportToExcel = () => {
+  // EDIT 4: Show export modal
+  const handleExportClick = () => {
+    setShowExportModal(true);
+  };
+
+  // EDIT 4C: Updated export function with both time formats and selection
+  const exportLibraries = (exportSelected) => {
     try {
-      const exportData = filteredAndSortedLibraries.map(library => {
+      const toExport = exportSelected 
+        ? filteredAndSortedLibraries.filter(lib => selectedLibraries.has(lib.library_id))
+        : filteredAndSortedLibraries;
+
+      if (toExport.length === 0) {
+        showMessage('No libraries to export', 'error');
+        setShowExportModal(false);
+        return;
+      }
+
+      const exportData = toExport.map(library => {
         const baseData = {
           'Library Name': library.library_name,
           'Library ID': library.library_id,
@@ -292,7 +335,8 @@ const formatWatchTime = (seconds) => {
           library.monthly_data.forEach((monthData, index) => {
             const monthKey = `${getMonthName(monthData.month)} ${monthData.year}`;
             baseData[`${monthKey} - Views`] = formatNumber(monthData.total_views);
-            baseData[`${monthKey} - Watch Time`] = formatWatchTime(monthData.total_watch_time_seconds);
+            baseData[`${monthKey} - Watch Time (Minutes)`] = formatWatchTime(monthData.total_watch_time_seconds, 'minutes');
+            baseData[`${monthKey} - Watch Time (H:M:S)`] = formatWatchTime(monthData.total_watch_time_seconds, 'hms');
           });
         }
 
@@ -303,7 +347,7 @@ const formatWatchTime = (seconds) => {
         'Library Name': 'SUMMARY',
         'Library ID': '',
         'Has Stats': '',
-        'Stats Count': filteredAndSortedLibraries.reduce((sum, lib) => sum + (lib.monthly_data?.length || 0), 0),
+        'Stats Count': toExport.reduce((sum, lib) => sum + (lib.monthly_data?.length || 0), 0),
         'Last Updated': ''
       };
 
@@ -318,13 +362,16 @@ const formatWatchTime = (seconds) => {
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Libraries Analytics');
       
-      const fileName = `libraries-analytics-${new Date().toISOString().split('T')[0]}.xlsx`;
+      const selectionNote = exportSelected ? '-selected' : '';
+      const fileName = `libraries-analytics${selectionNote}-${new Date().toISOString().split('T')[0]}.xlsx`;
       XLSX.writeFile(workbook, fileName);
       
       showMessage(`Excel file "${fileName}" has been downloaded successfully!`, 'success');
+      setShowExportModal(false);
     } catch (error) {
       console.error('Export error:', error);
       showMessage(`Error exporting to Excel: ${error.message}`, 'error');
+      setShowExportModal(false);
     }
   };
 
@@ -337,7 +384,6 @@ const formatWatchTime = (seconds) => {
   };
 
   const stats = getLibraryStats();
-  // Collapsible header state to free space when browsing
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
 
   return (
@@ -350,7 +396,7 @@ const formatWatchTime = (seconds) => {
       </div>
 
       <div className="relative z-10 max-w-7xl mx-auto p-8 space-y-8">
-        {/* Header Section - now collapsible */}
+        {/* Header Section */}
         <div className={`bg-white rounded-[12px] shadow-sm ${headerCollapsed ? 'p-4' : 'p-8'} mb-6`}>
           <div className="flex items-center justify-between">
             <div>
@@ -377,29 +423,25 @@ const formatWatchTime = (seconds) => {
             </div>
           </div>
 
-          {/* Stats Overview Cards inside header */}
           {!headerCollapsed && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-              {/* Total Libs */}
               <div className="bg-gradient-to-b from-slate-50 to-white border border-slate-200 rounded-[10px] p-5 text-center transform transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
                 <div className="text-[18px] mb-2">📚</div>
                 <div className="text-[36px] font-bold text-blue-600 leading-none">{stats.totalLibraries}</div>
                 <div className="text-[12px] text-slate-500 uppercase mt-1">Total Libs</div>
               </div>
 
-              {/* Analytics */}
               <div className="bg-gradient-to-b from-slate-50 to-white border border-slate-200 rounded-[10px] p-5 text-center transform transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
                 <div className="text-[18px] mb-2">📈</div>
                 <div className="text-[36px] font-bold text-blue-600 leading-none">{stats.librariesWithStats}</div>
                 <div className="text-[12px] text-slate-500 uppercase mt-1">Analytics</div>
               </div>
 
-            {/* Data Points */}
-            <div className="bg-gradient-to-b from-slate-50 to-white border border-slate-200 rounded-[10px] p-5 text-center transform transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
-              <div className="text-[18px] mb-2">📊</div>
-              <div className="text-[36px] font-bold text-blue-600 leading-none">{stats.totalDataPoints}</div>
-              <div className="text-[12px] text-slate-500 uppercase mt-1">Data Points</div>
-            </div>
+              <div className="bg-gradient-to-b from-slate-50 to-white border border-slate-200 rounded-[10px] p-5 text-center transform transition-all duration-300 hover:-translate-y-1 hover:shadow-lg">
+                <div className="text-[18px] mb-2">📊</div>
+                <div className="text-[36px] font-bold text-blue-600 leading-none">{stats.totalDataPoints}</div>
+                <div className="text-[12px] text-slate-500 uppercase mt-1">Data Points</div>
+              </div>
             </div>
           )}
         </div>
@@ -418,7 +460,7 @@ const formatWatchTime = (seconds) => {
           </div>
         )}
 
-        {/* Filters & Controls Panel - visual only */}
+        {/* Filters & Controls Panel */}
         <div className="bg-white rounded-[12px] shadow-sm mb-5">
           <div className="px-6 py-5 space-y-5">
             {/* Search Input */}
@@ -434,7 +476,6 @@ const formatWatchTime = (seconds) => {
 
             {/* Checkbox + Sort */}
             <div className="flex flex-wrap items-center gap-4">
-              {/* Analytics Only Checkbox - visual only */}
               <button
                 onClick={() => setShowOnlyWithStats(!showOnlyWithStats)}
                 className="flex items-center cursor-pointer"
@@ -447,7 +488,6 @@ const formatWatchTime = (seconds) => {
                 <span className="ml-2 text-[14px] text-slate-700 font-medium">Analytics Only</span>
               </button>
 
-              {/* Sort Dropdown with label */}
               <div className="flex items-center gap-2 relative">
                 <span className="text-[13px] text-slate-500">Sort by:</span>
                 <div className="relative">
@@ -464,7 +504,6 @@ const formatWatchTime = (seconds) => {
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
                 </div>
 
-                {/* ASC/DESC Button */}
                 <Button
                   variant="outline"
                   onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
@@ -515,20 +554,20 @@ const formatWatchTime = (seconds) => {
 
               {/* Export Button */}
               <Button 
-                onClick={exportToExcel} 
+                onClick={handleExportClick} 
                 className="h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 bg-emerald-500 text-white hover:bg-emerald-600 active:scale-[0.98] transition-all"
               >
                 <span className="text-[16px]">📥</span>
                 Export Excel
               </Button>
 
-              {/* Refresh Button */}
+              {/* EDIT 1: Refresh Button - Blue with white text for visibility */}
               <Button 
                 onClick={() => fetchLibrariesWithHistory(showOnlyWithStats, true)} 
                 disabled={loading} 
-                className="group h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 bg-slate-100 border-[1.5px] border-slate-300 text-slate-600 hover:bg-slate-200 transition-all"
+                className="group h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 transition-all"
               >
-                <span className={`text-[16px] transition-transform duration-300 ${loading ? 'animate-spin inline-block' : 'group-hover:rotate-90'}`}>🔄</span>
+                <RefreshCw className={`w-4 h-4 transition-transform duration-300 ${loading ? 'animate-spin' : 'group-hover:rotate-90'}`} />
                 Refresh
               </Button>
             </div>
@@ -575,11 +614,12 @@ const formatWatchTime = (seconds) => {
                 boxShadow: `${!atTop ? 'inset 0 8px 8px -8px rgba(0,0,0,0.1)' : ''}${(!atTop && !atBottom) ? ',' : ''}${!atBottom ? 'inset 0 -8px 8px -8px rgba(0,0,0,0.1)' : ''}`
               }}
             >
-              {/* Table Header */}
+              {/* EDIT 2: Table Header with proper alignment */}
               <div className="sticky top-0 z-10" style={{background:'#f8fafc', borderBottom:'2px solid #e2e8f0', height:'48px'}}>
                 <div className="flex items-center" style={{padding:'0 24px'}}>
-                  {/* Checkbox column */}
-                  <div style={{width:'50px'}}></div>
+                  <div style={{width:'50px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                    <span className="text-[11px] text-slate-500 font-semibold">SEL</span>
+                  </div>
                   {visibleColumns.libraryName && (
                     <div style={{width:'40%'}} className="uppercase tracking-[0.5px] text-[13px] font-semibold text-[#475569]">Library Name</div>
                   )}
@@ -602,10 +642,10 @@ const formatWatchTime = (seconds) => {
               {filteredAndSortedLibraries.map((library, index) => {
                 const isExpanded = expandedLibraries.has(library.library_id);
                 const hasStats = library.has_stats && library.monthly_data && library.monthly_data.length > 0;
+                const isSelected = selectedLibraries.has(library.library_id);
 
                 return (
                   <div key={library.library_id}>
-                    {/* Row */}
                     <div
                       className={`transition-all duration-150 cursor-pointer hover:translate-x-[2px]`}
                       style={{
@@ -616,20 +656,27 @@ const formatWatchTime = (seconds) => {
                       }}
                       onClick={() => toggleLibraryExpansion(library.library_id)}
                     >
-                      <div className="flex items-center h-full" style={{boxShadow:'inset 3px 0 0 0 transparent'}}>
-                        {/* Checkbox */}
-                        <div style={{width:'50px'}} className="flex items-center">
-                          <input type="checkbox" checked={hasStats} readOnly className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-0" />
+                      <div className="flex items-center h-full">
+                        {/* EDIT 4B: Functional Selection Checkbox */}
+                        <div style={{width:'50px'}} className="flex items-center justify-center">
+                          <button
+                            onClick={(e) => toggleLibrarySelection(library.library_id, e)}
+                            className="p-1"
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-4 h-4 text-blue-600" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-400" />
+                            )}
+                          </button>
                         </div>
 
-                        {/* Library Name */}
                         {visibleColumns.libraryName && (
                           <div style={{width:'40%'}}>
                             <div className="text-[15px] font-semibold text-[#1e293b] leading-tight">{library.library_name || `Library ${library.library_id}`}</div>
                           </div>
                         )}
 
-                        {/* Library ID */}
                         {visibleColumns.libraryId && (
                           <div style={{width:'20%'}}>
                             <span className="text-[13px] text-[#64748b] bg-[#f1f5f9] px-2 py-1 rounded" style={{fontFamily:'Monaco, Courier New, monospace'}}>
@@ -638,14 +685,12 @@ const formatWatchTime = (seconds) => {
                           </div>
                         )}
 
-                        {/* Stats Count */}
                         {visibleColumns.statsCount && (
                           <div style={{width:'12%'}}>
                             <span className={`text-[18px] font-bold ${ (library.monthly_data?.length || 0) === 0 ? 'text-[#94a3b8]' : 'text-[#2563eb]'}`}>{library.monthly_data?.length || 0}</span>
                           </div>
                         )}
 
-                        {/* Last Updated */}
                         {visibleColumns.lastUpdated && (
                           <div style={{width:'18%'}}>
                             {library.last_updated ? (
@@ -656,7 +701,6 @@ const formatWatchTime = (seconds) => {
                           </div>
                         )}
 
-                        {/* Monthly Data checkbox */}
                         {visibleColumns.monthlyData && (
                           <div style={{width:'10%'}} className="flex items-center justify-center">
                             <input type="checkbox" checked={hasStats} readOnly className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-0" />
@@ -679,7 +723,6 @@ const formatWatchTime = (seconds) => {
                           animation: 'slideDown 0.3s ease'
                         }}
                       >
-                        {/* Collapse Button */}
                         <button
                           type="button"
                           onClick={() => toggleLibraryExpansion(library.library_id)}
@@ -689,7 +732,6 @@ const formatWatchTime = (seconds) => {
                           <span className="text-[14px]">🔼</span>
                         </button>
 
-                        {/* Library Header */}
                         <div className="relative">
                           <div className="flex items-center gap-3">
                             <span className="text-[24px]">📚</span>
@@ -701,7 +743,6 @@ const formatWatchTime = (seconds) => {
                             </span>
                           </div>
 
-                          {/* Stats Row */}
                           <div className="mt-5 flex items-center gap-6">
                             <div>
                               <div className="text-[32px] font-bold text-[#2563eb] leading-none">{library.monthly_data?.length || 0}</div>
@@ -720,15 +761,26 @@ const formatWatchTime = (seconds) => {
 
                         {/* Monthly Performance Analytics */}
                         <div className="mt-6">
+                          {/* EDIT 3C: Header with Format Toggle Button */}
                           <div
-                            className="flex items-center gap-3 text-white rounded-t-[12px] shadow-[0_4px_6px_rgba(99,102,241,0.2)]"
+                            className="flex items-center justify-between text-white rounded-t-[12px] shadow-[0_4px_6px_rgba(99,102,241,0.2)]"
                             style={{background: 'linear-gradient(90deg,#6366f1,#4f46e5)', padding:'16px 24px'}}
                           >
-                            <span className="text-[20px]">📈</span>
-                            <span className="text-[18px] font-bold">Monthly Performance Analytics</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[20px]">📈</span>
+                              <span className="text-[18px] font-bold">Monthly Performance Analytics</span>
+                            </div>
+                            <Button
+                              onClick={(e) => { e.stopPropagation(); toggleWatchTimeFormat(library.library_id); }}
+                              className="h-[32px] px-[14px] rounded-[6px] text-[13px] font-medium inline-flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border border-white/30 transition-all"
+                            >
+                              <Hash className="w-3 h-3" />
+                              {watchTimeFormats[library.library_id] === 'hms' ? 'Minutes' : 'Formatted'}
+                            </Button>
                           </div>
 
                           <div className="bg-white rounded-b-[12px] overflow-hidden">
+                            {/* EDIT 3A: Fixed Headers Alignment */}
                             <div className="sticky top-0" style={{background:'#f8fafc', borderBottom:'2px solid #e2e8f0', height:'44px'}}>
                               <div className="flex items-center" style={{padding:'0 24px'}}>
                                 <div className="uppercase tracking-[0.5px] text-[13px] font-semibold text-[#475569]" style={{width:'40%'}}>Period</div>
@@ -737,6 +789,7 @@ const formatWatchTime = (seconds) => {
                               </div>
                             </div>
 
+                            {/* EDIT 3B: Data rows sorted by period (already correct) */}
                             {library.monthly_data
                               .sort((a, b) => {
                                 if (a.year !== b.year) return b.year - a.year;
@@ -753,37 +806,82 @@ const formatWatchTime = (seconds) => {
                                   }}
                                 >
                                   <div className="flex items-center gap-4 h-full">
-                                    {/* Period */}
                                     <div style={{width:'40%'}} className="flex items-center gap-2">
                                       <span className="text-[16px]" style={{color:'#6366f1'}}>📅</span>
                                       <span className="text-[15px] font-semibold text-[#1e293b]">{getMonthName(monthData.month)} {monthData.year}</span>
                                     </div>
-                                    {/* Views */}
                                     <div style={{width:'30%'}} className="flex items-center gap-2">
                                       <span className="text-[16px]" style={{color:'#10b981'}}>👁️</span>
                                       <span className="text-[18px] font-bold text-[#1e293b]">{formatNumber(monthData.total_views)}</span>
                                     </div>
-                                    {/* Watch Time */}
+                                    {/* EDIT 3C: Watch time with dynamic format */}
                                     <div style={{width:'30%'}} className="flex items-center gap-2">
                                       <span className="text-[16px]" style={{color:'#f59e0b'}}>⏱️</span>
-                                      <span className="text-[15px] font-semibold text-[#1e293b]">{formatWatchTime(monthData.total_watch_time_seconds)}</span>
+                                      <span className="text-[15px] font-semibold text-[#1e293b]">
+                                        {formatWatchTime(monthData.total_watch_time_seconds, watchTimeFormats[library.library_id] || 'minutes')}
+                                      </span>
                                     </div>
                                   </div>
                                 </div>
                               ))}
-                            </div>
                           </div>
                         </div>
-                      )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           </div>
         )}
-
-        {/* Enhanced Info Card removed as requested */}
       </div>
+
+      {/* EDIT 4: Export Confirmation Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+            <div className="flex items-center justify-center mb-4">
+              <Download className="h-12 w-12 text-emerald-500" />
+            </div>
+            <h3 className="text-xl font-semibold text-slate-900 text-center mb-2">
+              Export to Excel
+            </h3>
+            <p className="text-sm text-slate-600 text-center mb-6">
+              Choose which libraries to export:
+            </p>
+
+            <div className="space-y-3 mb-6">
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="text-sm font-medium text-slate-700">Total Libraries: {filteredAndSortedLibraries.length}</div>
+                <div className="text-sm font-medium text-slate-700 mt-1">Selected: {selectedLibraries.size}</div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <Button
+                onClick={() => exportLibraries(false)}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+              >
+                Export All Libraries ({filteredAndSortedLibraries.length})
+              </Button>
+              <Button
+                onClick={() => exportLibraries(true)}
+                disabled={selectedLibraries.size === 0}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Export Selected ({selectedLibraries.size})
+              </Button>
+              <Button
+                onClick={() => setShowExportModal(false)}
+                variant="outline"
+                className="w-full"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
