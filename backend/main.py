@@ -790,36 +790,69 @@ def create_library_config(config: schemas.LibraryConfigCreate, db: Session = Dep
 
 from datetime import datetime
 
-@app.put("/library-configs/{library_id}")
-def update_library_config(library_id: int, config: schemas.LibraryConfigUpdate, db: Session = Depends(get_db)):
-    db_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
-    
-    # Update the fields
-    for key, value in config.dict(exclude_unset=True).items():
-        setattr(db_config, key, value)
-    
-    # IMPORTANT: Add this line to update the timestamp
-    db_config.updated_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(db_config)
-    return db_config
-    
+@app.put("/library-configs/{library_id}", response_model=schemas.LibraryConfig)
+def update_library_config(
+    library_id: int, 
+    config: schemas.LibraryConfigUpdate, 
+    db: Session = Depends(get_db)
+):
     """Update library configuration"""
-    db_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
+    
+    # Get existing config
+    db_config = db.query(models.LibraryConfig).filter(
+        models.LibraryConfig.library_id == library_id
+    ).first()
+    
     if not db_config:
-        raise HTTPException(status_code=404, detail="Library configuration not found")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Library configuration not found for library_id {library_id}"
+        )
+    
+    # CRITICAL: Log what we're receiving (for debugging)
+    logger.info("="*60)
+    logger.info(f"UPDATE CONFIG - Library ID: {library_id}")
     
     # Update only provided fields
     update_data = config.dict(exclude_unset=True)
+    
     for field, value in update_data.items():
+        if field == "stream_api_key" and value:
+            logger.info(f"Received API Key Length: {len(value)}")
+            logger.info(f"Received API Key First 10 chars: {value[:10]}")
+            logger.info(f"Received API Key Last 10 chars: {value[-10:]}")
+        
+        # Save EXACTLY as received - NO MODIFICATION
         setattr(db_config, field, value)
     
-    db_config.updated_at = datetime.now()
+    # Update timestamp
+    db_config.updated_at = datetime.utcnow()
+    
+    # Commit and refresh
     db.commit()
     db.refresh(db_config)
+    
+    # CRITICAL: Verify what was actually saved
+    if 'stream_api_key' in update_data:
+        saved_key = db_config.stream_api_key
+        original_key = update_data['stream_api_key']
+        
+        logger.info(f"Saved API Key Length: {len(saved_key) if saved_key else 0}")
+        logger.info(f"Keys Match: {original_key == saved_key}")
+        
+        if original_key != saved_key:
+            logger.error("⚠️ API KEY MISMATCH!")
+            logger.error(f"Expected: {original_key}")
+            logger.error(f"Got: {saved_key}")
+            raise HTTPException(
+                status_code=500,
+                detail="API key was not saved correctly"
+            )
+    
+    logger.info("="*60)
+    
     return db_config
-
+    
 @app.delete("/library-configs/{library_id}")
 def delete_library_config(library_id: int, db: Session = Depends(get_db)):
     """Delete library configuration"""
