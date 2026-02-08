@@ -8,20 +8,18 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import { 
   RefreshCw, 
   Search, 
-  ExternalLink, 
   TrendingUp, 
   Database,
-  Calendar,
   BarChart3,
   CheckSquare,
   Square,
   Clock,
   Hash,
-  Info,
   X,
   CheckCircle,
   AlertCircle,
-  Loader2
+  Loader2,
+  Eye
 } from 'lucide-react';
 
 const BunnyLibraries = () => {
@@ -32,27 +30,18 @@ const BunnyLibraries = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
   const [message, setMessage] = useState({ text: '', type: '' });
   const [showRawNumbers, setShowRawNumbers] = useState(false);
-  // Visual-only filters for Fetch Stats page (not affecting functionality)
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [dateRange, setDateRange] = useState('Last 7 Days');
-  // NEW: Filter to show only libraries with fetched data
   const [showOnlyFetched, setShowOnlyFetched] = useState(false);
+  
+  // NEW: Clear confirmation state
+  const [showClearConfirmation, setShowClearConfirmation] = useState(false);
 
-  // Virtual scroll container (same pattern as Libraries page)
   const scrollRef = React.useRef(null);
   const [atTop, setAtTop] = useState(true);
   const [atBottom, setAtBottom] = useState(false);
-  const handleScroll = (e) => {
-    const el = e.currentTarget;
-    setAtTop(el.scrollTop <= 0);
-    setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
-  };
   
-  // Status popup states
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [fetchStatus, setFetchStatus] = useState({
     isLoading: false,
@@ -90,21 +79,24 @@ const BunnyLibraries = () => {
     setTimeout(() => setMessage({ text: '', type: '' }), 5000);
   };
 
-  // Cache key for localStorage
+  const handleScroll = (e) => {
+    const el = e.currentTarget;
+    setAtTop(el.scrollTop <= 0);
+    setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
+  };
+
+  // Persistence keys
   const LIBRARIES_CACHE_KEY = 'bunny_libraries_cache';
   const CACHE_EXPIRY_KEY = 'bunny_libraries_cache_expiry';
-  const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-  // Persistence keys for Fetch Stats page state
+  const CACHE_DURATION = 24 * 60 * 60 * 1000;
   const SELECTED_LIBS_KEY = 'bunny_selected_libraries';
   const SELECTED_MONTH_KEY = 'bunny_selected_month';
   const SELECTED_YEAR_KEY = 'bunny_selected_year';
   const LIBRARY_STATS_KEY = 'bunny_library_stats';
   const SHOW_RAW_KEY = 'bunny_show_raw_numbers';
 
-  // Load persisted selections and stats on mount
+  // Load persisted data
   useEffect(() => {
-    // Restore selected libraries
     try {
       const persistedSelected = JSON.parse(localStorage.getItem(SELECTED_LIBS_KEY) || '[]');
       if (Array.isArray(persistedSelected) && persistedSelected.length > 0) {
@@ -112,7 +104,6 @@ const BunnyLibraries = () => {
       }
     } catch (_) {}
 
-    // Restore month/year
     try {
       const pm = parseInt(localStorage.getItem(SELECTED_MONTH_KEY));
       const py = parseInt(localStorage.getItem(SELECTED_YEAR_KEY));
@@ -120,7 +111,6 @@ const BunnyLibraries = () => {
       if (!isNaN(py) && py > 2000) setSelectedYear(py);
     } catch (_) {}
 
-    // Restore stats
     try {
       const statsStr = localStorage.getItem(LIBRARY_STATS_KEY);
       if (statsStr) {
@@ -131,7 +121,6 @@ const BunnyLibraries = () => {
       }
     } catch (_) {}
 
-    // Restore raw numbers preference
     try {
       const rawPref = localStorage.getItem(SHOW_RAW_KEY);
       if (rawPref === 'true' || rawPref === 'false') {
@@ -140,7 +129,7 @@ const BunnyLibraries = () => {
     } catch (_) {}
   }, []);
 
-  // Persist selections and preferences when they change
+  // Persist changes
   useEffect(() => {
     try { localStorage.setItem(SELECTED_MONTH_KEY, selectedMonth.toString()); } catch (_) {}
   }, [selectedMonth]);
@@ -161,7 +150,6 @@ const BunnyLibraries = () => {
     try { localStorage.setItem(SHOW_RAW_KEY, showRawNumbers ? 'true' : 'false'); } catch (_) {}
   }, [showRawNumbers]);
 
-  // Load libraries from cache
   const loadLibrariesFromCache = () => {
     try {
       const cachedData = localStorage.getItem(LIBRARIES_CACHE_KEY);
@@ -171,7 +159,6 @@ const BunnyLibraries = () => {
         const now = Date.now();
         if (now < parseInt(cacheExpiry)) {
           const cached = JSON.parse(cachedData);
-          // Normalize shape and dedupe by id
           const normalized = (Array.isArray(cached) ? cached : []).map((lib) => ({
             id: lib.id ?? lib.library_id,
             name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
@@ -183,21 +170,18 @@ const BunnyLibraries = () => {
           showMessage(`Loaded ${uniqueById.length} libraries from cache`);
           return true;
         } else {
-          // Cache expired, clear it
           localStorage.removeItem(LIBRARIES_CACHE_KEY);
           localStorage.removeItem(CACHE_EXPIRY_KEY);
         }
       }
     } catch (error) {
       console.error('Error loading from cache:', error);
-      // Clear corrupted cache
       localStorage.removeItem(LIBRARIES_CACHE_KEY);
       localStorage.removeItem(CACHE_EXPIRY_KEY);
     }
     return false;
   };
 
-  // Save libraries to cache
   const saveLibrariesToCache = (libraries) => {
     try {
       const expiry = Date.now() + CACHE_DURATION;
@@ -208,102 +192,89 @@ const BunnyLibraries = () => {
     }
   };
 
-  // Clear cache
-  const clearLibrariesCache = () => {
-    localStorage.removeItem(LIBRARIES_CACHE_KEY);
-    localStorage.removeItem(CACHE_EXPIRY_KEY);
-  };
-
- const fetchLibraries = async (forceRefresh = false) => {
-  // If not forcing refresh, try to load from cache first
-  if (!forceRefresh && loadLibrariesFromCache()) {
-    return;
-  }
-
-  setLoading(true);
-  try {
-    // Primary: get all libraries directly from Bunny API
-    const { data: baseData } = await api.get('/bunny-libraries/');
-    const normalizedBase = (Array.isArray(baseData) ? baseData : []).map((lib) => ({
-      id: lib.id ?? lib.library_id,
-      name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
-      monthly_data: [],
-      last_updated: null,
-    }));
-    const uniqueBase = Array.from(new Map(normalizedBase.map(l => [l.id, l])).values());
-    setLibraries(uniqueBase);
-
-    // Save to cache immediately so UI isn't blocked
-    saveLibrariesToCache(uniqueBase);
-    showMessage(`Loaded ${uniqueBase.length} libraries from Bunny.net`);
-
-    // Secondary: merge any synced monthly stats for the selected period
-    try {
-      const { data: histData } = await api.get('/historical-stats/libraries/?with_stats_only=true');
-      const statsMap = {};
-      (Array.isArray(histData) ? histData : []).forEach((lib) => {
-        const libId = lib.id ?? lib.library_id;
-        const md = (lib.monthly_data || []).find(
-          (d) => d.month === selectedMonth && d.year === selectedYear
-        );
-        if (md && libId != null) {
-          statsMap[libId] = {
-            views: md.total_views ?? 0,
-            total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
-            month: md.month,
-            year: md.year,
-            last_updated: lib.last_updated ?? null,
-          };
-        }
-      });
-      // Merge synced stats without overwriting freshly fetched values
-      setLibraryStats(prev => ({ ...prev, ...statsMap }));
-    } catch (innerErr) {
-      console.warn('Unable to load synced historical stats:', innerErr);
+  const fetchLibraries = async (forceRefresh = false) => {
+    if (!forceRefresh && loadLibrariesFromCache()) {
+      return;
     }
 
-  } catch (error) {
-    console.error('Error fetching libraries:', error);
-    // Fallback: try historical stats endpoint to at least get synced libraries
+    setLoading(true);
     try {
-      const { data } = await api.get('/historical-stats/libraries/?with_stats_only=true');
-      const normalized = (Array.isArray(data) ? data : []).map((lib) => ({
+      const { data: baseData } = await api.get('/bunny-libraries/');
+      const normalizedBase = (Array.isArray(baseData) ? baseData : []).map((lib) => ({
         id: lib.id ?? lib.library_id,
         name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
-        monthly_data: lib.monthly_data ?? [],
-        last_updated: lib.last_updated ?? null,
+        monthly_data: [],
+        last_updated: null,
       }));
-      const uniqueById = Array.from(new Map(normalized.map(l => [l.id, l])).values());
-      setLibraries(uniqueById);
+      const uniqueBase = Array.from(new Map(normalizedBase.map(l => [l.id, l])).values());
+      setLibraries(uniqueBase);
 
-      const statsMap = {};
-      normalized.forEach((lib) => {
-        const md = (lib.monthly_data || []).find(
-          (d) => d.month === selectedMonth && d.year === selectedYear
-        );
-        if (md) {
-          statsMap[lib.id] = {
-            views: md.total_views ?? 0,
-            total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
-            month: md.month,
-            year: md.year,
-            last_updated: lib.last_updated,
-          };
-        }
-      });
-      setLibraryStats(statsMap);
-      saveLibrariesToCache(uniqueById);
-      showMessage(`Fetched ${uniqueById.length} synced libraries from history`);
-    } catch (fallbackErr) {
-      console.error('Fallback error fetching libraries:', fallbackErr);
-      showMessage('Failed to fetch libraries', 'error');
+      saveLibrariesToCache(uniqueBase);
+      showMessage(`Loaded ${uniqueBase.length} libraries from Bunny.net`);
+
+      try {
+        const { data: histData } = await api.get('/historical-stats/libraries/?with_stats_only=true');
+        const statsMap = {};
+        (Array.isArray(histData) ? histData : []).forEach((lib) => {
+          const libId = lib.id ?? lib.library_id;
+          const md = (lib.monthly_data || []).find(
+            (d) => d.month === selectedMonth && d.year === selectedYear
+          );
+          if (md && libId != null) {
+            statsMap[libId] = {
+              views: md.total_views ?? 0,
+              total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
+              month: md.month,
+              year: md.year,
+              last_updated: lib.last_updated ?? null,
+            };
+          }
+        });
+        setLibraryStats(prev => ({ ...prev, ...statsMap }));
+      } catch (innerErr) {
+        console.warn('Unable to load synced historical stats:', innerErr);
+      }
+
+    } catch (error) {
+      console.error('Error fetching libraries:', error);
+      try {
+        const { data } = await api.get('/historical-stats/libraries/?with_stats_only=true');
+        const normalized = (Array.isArray(data) ? data : []).map((lib) => ({
+          id: lib.id ?? lib.library_id,
+          name: lib.name ?? lib.library_name ?? `Library ${lib.id ?? lib.library_id}`,
+          monthly_data: lib.monthly_data ?? [],
+          last_updated: lib.last_updated ?? null,
+        }));
+        const uniqueById = Array.from(new Map(normalized.map(l => [l.id, l])).values());
+        setLibraries(uniqueById);
+
+        const statsMap = {};
+        normalized.forEach((lib) => {
+          const md = (lib.monthly_data || []).find(
+            (d) => d.month === selectedMonth && d.year === selectedYear
+          );
+          if (md) {
+            statsMap[lib.id] = {
+              views: md.total_views ?? 0,
+              total_watch_time_seconds: md.total_watch_time_seconds ?? 0,
+              month: md.month,
+              year: md.year,
+              last_updated: lib.last_updated,
+            };
+          }
+        });
+        setLibraryStats(statsMap);
+        saveLibrariesToCache(uniqueById);
+        showMessage(`Fetched ${uniqueById.length} synced libraries from history`);
+      } catch (fallbackErr) {
+        console.error('Fallback error fetching libraries:', fallbackErr);
+        showMessage('Failed to fetch libraries', 'error');
+      }
+    } finally {
+      setLoading(false);
     }
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
-  // Recompute stats when libraries or selected period changes
   useEffect(() => {
     const statsMap = {};
     libraries.forEach((lib) => {
@@ -320,225 +291,213 @@ const BunnyLibraries = () => {
         };
       }
     });
-    // Merge derived stats without discarding previously fetched values
     setLibraryStats(prev => ({ ...prev, ...statsMap }));
   }, [libraries, selectedMonth, selectedYear]);
 
-const fetchLibraryStats = async () => {
-  if (selectedLibraries.size === 0) {
-    showMessage('Please select at least one library', 'error');
-    return;
-  }
-
-  // Initialize status popup
-  setShowStatusPopup(true);
-  setFetchStatus({
-    isLoading: true,
-    completed: [],
-    failed: [],
-    total: selectedLibraries.size,
-    currentLibrary: null
-  });
-  setSyncStatus({
-    isLoading: false,
-    completed: [],
-    failed: [],
-    total: 0
-  });
-
-  let configMap = new Map();
-
-  try {
-    // Get library configurations to check API keys
-    const { data: configs } = await api.get('/library-configs/');
-    configMap = new Map(configs.map(cfg => [cfg.library_id, cfg]));
-  } catch (configError) {
-    console.error('Error fetching library configurations:', configError);
-    showMessage('Failed to check API configurations', 'error');
-    setFetchStatus(prev => ({
-      ...prev,
-      isLoading: false
-    }));
-    return;
-  }
-
-  const libraryIds = Array.from(selectedLibraries);
-  const validLibraries = [];
-  const unconfiguredLibraries = [];
-
-  // Check which libraries have API keys configured
-  libraryIds.forEach(id => {
-    const config = configMap.get(id);
-    if (config && config.stream_api_key) {
-      validLibraries.push(id);
-    } else {
-      unconfiguredLibraries.push({
-        library_id: id,
-        library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
-        error: 'No API key configured. Please add API key in API Config page.'
-      });
+  const fetchLibraryStats = async () => {
+    if (selectedLibraries.size === 0) {
+      showMessage('Please select at least one library', 'error');
+      return;
     }
-  });
 
-  // Update status for unconfigured libraries
-  if (unconfiguredLibraries.length > 0) {
-    setFetchStatus(prev => ({
-      ...prev,
-      failed: [...prev.failed, ...unconfiguredLibraries]
-    }));
-  }
+    setShowStatusPopup(true);
+    setFetchStatus({
+      isLoading: true,
+      completed: [],
+      failed: [],
+      total: selectedLibraries.size,
+      currentLibrary: null
+    });
+    setSyncStatus({
+      isLoading: false,
+      completed: [],
+      failed: [],
+      total: 0
+    });
 
-  // Only proceed with libraries that have API keys
-  if (validLibraries.length > 0) {
+    let configMap = new Map();
+
     try {
-      const { data } = await api.post('/historical-stats/batch-fetch/', {
-        library_ids: validLibraries,
+      const { data: configs } = await api.get('/library-configs/');
+      configMap = new Map(configs.map(cfg => [cfg.library_id, cfg]));
+    } catch (configError) {
+      console.error('Error fetching library configurations:', configError);
+      showMessage('Failed to check API configurations', 'error');
+      setFetchStatus(prev => ({
+        ...prev,
+        isLoading: false
+      }));
+      return;
+    }
+
+    const libraryIds = Array.from(selectedLibraries);
+    const validLibraries = [];
+    const unconfiguredLibraries = [];
+
+    libraryIds.forEach(id => {
+      const config = configMap.get(id);
+      if (config && config.stream_api_key) {
+        validLibraries.push(id);
+      } else {
+        unconfiguredLibraries.push({
+          library_id: id,
+          library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
+          error: 'No API key configured. Please add API key in API Config page.'
+        });
+      }
+    });
+
+    if (unconfiguredLibraries.length > 0) {
+      setFetchStatus(prev => ({
+        ...prev,
+        failed: [...prev.failed, ...unconfiguredLibraries]
+      }));
+    }
+
+    if (validLibraries.length > 0) {
+      try {
+        const { data } = await api.post('/historical-stats/batch-fetch/', {
+          library_ids: validLibraries,
+          month: selectedMonth,
+          year: selectedYear
+        });
+
+        const successes = (data.results || []).filter(r => r.success);
+        const failures = (data.results || []).filter(r => !r.success);
+
+        setLibraryStats(prev => {
+          const updated = { ...prev };
+          successes.forEach(r => {
+            const d = r.data || {};
+            updated[r.library_id] = {
+              views: d.total_views ?? 0,
+              total_watch_time_seconds: d.total_watch_time_seconds ?? 0,
+              month: d.month ?? selectedMonth,
+              year: d.year ?? selectedYear,
+              last_updated: d.fetch_date ?? new Date().toISOString(),
+            };
+          });
+          return updated;
+        });
+
+        setFetchStatus(prev => ({
+          ...prev,
+          completed: successes.map(r => ({
+            library_id: r.library_id,
+            library_name: r.library_name,
+            message: r.message || 'Successfully fetched statistics',
+          })),
+          failed: [
+            ...prev.failed,
+            ...failures.map(r => ({
+              library_id: r.library_id,
+              library_name: r.library_name,
+              error: r.error || 'Failed to fetch statistics',
+            }))
+          ]
+        }));
+
+        const successCount = successes.length;
+        const failCount = failures.length + unconfiguredLibraries.length;
+        const unconfiguredMsg = unconfiguredLibraries.length > 0 
+          ? ` (${unconfiguredLibraries.length} libraries need API keys)` 
+          : '';
+        
+        showMessage(
+          `Updated stats for ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}${unconfiguredMsg}`,
+          failCount > 0 ? 'error' : 'success'
+        );
+      } catch (fetchError) {
+        console.error('Error fetching library stats:', fetchError);
+        setFetchStatus(prev => ({
+          ...prev,
+          failed: [
+            ...prev.failed,
+            ...validLibraries.map(id => ({
+              library_id: id,
+              library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
+              error: fetchError.response?.data?.detail || fetchError.message || 'Failed to fetch statistics'
+            }))
+          ]
+        }));
+        showMessage('Failed to fetch library statistics', 'error');
+      }
+    } else if (unconfiguredLibraries.length > 0) {
+      showMessage('No libraries have API keys configured. Please configure API keys in API Config page.', 'error');
+    }
+
+    setFetchStatus(prev => ({ ...prev, isLoading: false }));
+  };
+  
+  const syncToLibrariesPage = async () => {
+    const successfulFetches = fetchStatus.completed;
+    if (successfulFetches.length === 0) {
+      showMessage('No successful fetches to sync', 'error');
+      return;
+    }
+
+    setSyncStatus({
+      isLoading: true,
+      completed: [],
+      failed: [],
+      total: successfulFetches.length
+    });
+
+    let syncData;
+    try {
+      const { data } = await api.post('/historical-stats/sync/', {
+        library_ids: successfulFetches.map(lib => lib.library_id),
         month: selectedMonth,
         year: selectedYear
       });
-
-      const successes = (data.results || []).filter(r => r.success);
-      const failures = (data.results || []).filter(r => !r.success);
-
-      // Update table stats for successful fetches
-      setLibraryStats(prev => {
-        const updated = { ...prev };
-        successes.forEach(r => {
-          const d = r.data || {};
-          updated[r.library_id] = {
-            views: d.total_views ?? 0,
-            total_watch_time_seconds: d.total_watch_time_seconds ?? 0,
-            month: d.month ?? selectedMonth,
-            year: d.year ?? selectedYear,
-            last_updated: d.fetch_date ?? new Date().toISOString(),
-          };
-        });
-        return updated;
-      });
-
-      // Update fetch status
-      setFetchStatus(prev => ({
+      syncData = data;
+    } catch (error) {
+      console.error('Error syncing to Libraries page:', error);
+      setSyncStatus(prev => ({
         ...prev,
-        completed: successes.map(r => ({
-          library_id: r.library_id,
-          library_name: r.library_name,
-          message: r.message || 'Successfully fetched statistics',
-        })),
-        failed: [
-          ...prev.failed,
-          ...failures.map(r => ({
-            library_id: r.library_id,
-            library_name: r.library_name,
-            error: r.error || 'Failed to fetch statistics',
-          }))
-        ]
+        isLoading: false,
+        failed: successfulFetches.map(lib => ({
+          library_id: lib.library_id,
+          library_name: lib.library_name,
+          error: error.response?.data?.detail || error.message || 'Failed to sync to Libraries page'
+        }))
       }));
-
-      // Show summary message
-      const successCount = successes.length;
-      const failCount = failures.length + unconfiguredLibraries.length;
-      const unconfiguredMsg = unconfiguredLibraries.length > 0 
-        ? ` (${unconfiguredLibraries.length} libraries need API keys)` 
-        : '';
-      
-      showMessage(
-        `Updated stats for ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}${unconfiguredMsg}`,
-        failCount > 0 ? 'error' : 'success'
-      );
-    } catch (fetchError) {
-      console.error('Error fetching library stats:', fetchError);
-      setFetchStatus(prev => ({
-        ...prev,
-        failed: [
-          ...prev.failed,
-          ...validLibraries.map(id => ({
-            library_id: id,
-            library_name: libraries.find(lib => lib.id === id)?.name || `Library ${id}`,
-            error: fetchError.response?.data?.detail || fetchError.message || 'Failed to fetch statistics'
-          }))
-        ]
-      }));
-      showMessage('Failed to fetch library statistics', 'error');
+      showMessage('Failed to sync to Libraries page', 'error');
+      return;
     }
-  } else if (unconfiguredLibraries.length > 0) {
-    showMessage('No libraries have API keys configured. Please configure API keys in API Config page.', 'error');
-  }
 
-  setFetchStatus(prev => ({ ...prev, isLoading: false }));
-};
-  
-const syncToLibrariesPage = async () => {
-  const successfulFetches = fetchStatus.completed;
-  if (successfulFetches.length === 0) {
-    showMessage('No successful fetches to sync', 'error');
-    return;
-  }
+    const successResults = syncData.results.filter(r => r.success);
+    const failureResults = syncData.results.filter(r => !r.success);
 
-  setSyncStatus({
-    isLoading: true,
-    completed: [],
-    failed: [],
-    total: successfulFetches.length
-  });
-
-  let syncData;
-  try {
-    const { data } = await api.post('/historical-stats/sync/', {
-      library_ids: successfulFetches.map(lib => lib.library_id),
-      month: selectedMonth,
-      year: selectedYear
-    });
-    syncData = data;
-  } catch (error) {
-    console.error('Error syncing to Libraries page:', error);
     setSyncStatus(prev => ({
       ...prev,
       isLoading: false,
-      failed: successfulFetches.map(lib => ({
-        library_id: lib.library_id,
-        library_name: lib.library_name,
-        error: error.response?.data?.detail || error.message || 'Failed to sync to Libraries page'
+      completed: successResults.map(r => ({
+        library_id: r.library_id,
+        library_name: r.library_name,
+        message: r.message || 'Successfully synced'
+      })),
+      failed: failureResults.map(r => ({
+        library_id: r.library_id,
+        library_name: r.library_name,
+        error: r.error || 'Failed to sync'
       }))
     }));
-    showMessage('Failed to sync to Libraries page', 'error');
-    return;
-  }
 
-  // Process results after successful API call
-  const successResults = syncData.results.filter(r => r.success);
-  const failureResults = syncData.results.filter(r => !r.success);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('teachers:updated'));
+    }
 
-  setSyncStatus(prev => ({
-    ...prev,
-    isLoading: false,
-    completed: successResults.map(r => ({
-      library_id: r.library_id,
-      library_name: r.library_name,
-      message: r.message || 'Successfully synced'
-    })),
-    failed: failureResults.map(r => ({
-      library_id: r.library_id,
-      library_name: r.library_name,
-      error: r.error || 'Failed to sync'
-    }))
-  }));
+    const successCount = successResults.length;
+    const failCount = failureResults.length;
+    
+    showMessage(
+      `Synced ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}. Review on Libraries page.`,
+      failCount > 0 ? 'error' : 'success'
+    );
+  };
 
-  // Notify about teachers list update without try-catch
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('teachers:updated'));
-  }
-
-  // Show sync summary
-  const successCount = successResults.length;
-  const failCount = failureResults.length;
-  
-  showMessage(
-    `Synced ${successCount} libraries${failCount ? `, ${failCount} failed` : ''}. Review on Libraries page.`,
-    failCount > 0 ? 'error' : 'success'
-  );
-};
   const closeStatusPopup = () => {
-    // Snapshot before resetting for correct refresh behavior
     const hadFetchCompleted = Array.isArray(fetchStatus?.completed) && fetchStatus.completed.length > 0;
     const hadSyncCompleted = Array.isArray(syncStatus?.completed) && syncStatus.completed.length > 0;
     setShowStatusPopup(false);
@@ -556,26 +515,26 @@ const syncToLibrariesPage = async () => {
       total: 0
     });
     
-    // Only refresh libraries if a sync was performed to pull latest synced stats
-    // Otherwise, keep the freshly fetched stats already displayed in table
-    // Note: rely on current state snapshot; if any completed syncs existed, refresh
     try {
       if (hadFetchCompleted && hadSyncCompleted) {
         fetchLibraries(true);
       }
-    } catch (_) {
-      // No-op; keep current stats
-    }
+    } catch (_) {}
   };
 
-  // Clear selections and fetched statistics
-  const clearSelectionsAndStats = () => {
+  // EDIT 6: Clear with confirmation
+  const handleClearClick = () => {
+    setShowClearConfirmation(true);
+  };
+
+  const confirmClear = () => {
     try {
       localStorage.removeItem(SELECTED_LIBS_KEY);
       localStorage.removeItem(LIBRARY_STATS_KEY);
     } catch (_) {}
     setSelectedLibraries(new Set());
     setLibraryStats({});
+    setShowClearConfirmation(false);
     showMessage('Cleared selected libraries and fetched stats');
   };
 
@@ -589,8 +548,9 @@ const syncToLibrariesPage = async () => {
     setSelectedLibraries(newSelected);
   };
 
+  // EDIT 3: Fixed Select All - shows "Deselect All" when ANY library selected
   const toggleSelectAll = () => {
-    if (selectedLibraries.size === filteredAndSortedLibraries.length) {
+    if (selectedLibraries.size > 0) {
       setSelectedLibraries(new Set());
     } else {
       setSelectedLibraries(new Set(filteredAndSortedLibraries.map(lib => lib.id)));
@@ -610,42 +570,36 @@ const syncToLibrariesPage = async () => {
     return num?.toString() || '0';
   };
 
-  // FIXED: Watch time format in HH:MM:SS
+  // EDIT 4: Watch time format - Minutes when Formatted, HH:MM:SS when Raw
   const formatWatchTime = (seconds) => {
-    if (!seconds || seconds === 0) return '0:00:00';
+    if (!seconds || seconds === 0) return showRawNumbers ? '0:00:00' : '0 min';
     
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    // Format as HH:MM:SS
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    if (showRawNumbers) {
+      // Raw format: HH:MM:SS
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    } else {
+      // Formatted: Total minutes
+      const totalMinutes = Math.round(seconds / 60);
+      return `${totalMinutes.toLocaleString()} min`;
+    }
   };
 
-  const formatLastUpdated = (timestamp) => {
-    if (!timestamp) return null;
+  // EDIT 4C: Get statistics URL with date range
+  const getStatisticsUrl = (libraryId, stats) => {
+    if (!stats) return `https://dash.bunny.net/stream/${libraryId}/statistics`;
     
-    try {
-      const date = new Date(timestamp);
-      const now = new Date();
-      const diffMs = now - date;
-      const diffMins = Math.floor(diffMs / (1000 * 60));
-      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-      
-      if (diffMins < 1) return 'Just now';
-      if (diffMins < 60) return `${diffMins}m ago`;
-      if (diffHours < 24) return `${diffHours}h ago`;
-      
-      return date.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZoneName: 'short'
-      });
-    } catch (error) {
-      return 'Unknown';
-    }
+    const year = stats.year;
+    const month = stats.month;
+    
+    // Get first and last day of month
+    const firstDay = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const lastDayFormatted = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    
+    return `https://dash.bunny.net/stream/${libraryId}/statistics?datePicker=${firstDay}&datePicker=${lastDayFormatted}`;
   };
 
   const filteredAndSortedLibraries = libraries
@@ -656,7 +610,6 @@ const syncToLibrariesPage = async () => {
         (library.id?.toString() || '').includes(searchTerm)
       );
       
-      // FIXED: Add filter for libraries with fetched data only
       if (showOnlyFetched) {
         return matchesSearch && libraryStats[library.id] !== undefined;
       }
@@ -664,26 +617,13 @@ const syncToLibrariesPage = async () => {
       return matchesSearch;
     })
     .sort((a, b) => {
-      let aValue, bValue;
-      
-      if (sortBy === 'views') {
-        aValue = libraryStats[a.id]?.views || 0;
-        bValue = libraryStats[b.id]?.views || 0;
-      } else if (sortBy === 'watch_time') {
-        aValue = libraryStats[a.id]?.total_watch_time_seconds || 0;
-        bValue = libraryStats[b.id]?.total_watch_time_seconds || 0;
-      } else if (sortBy === 'name') {
-          aValue = (a.name || '').toLowerCase();
-          bValue = (b.name || '').toLowerCase();
-      } else {
-          aValue = a.id;
-          bValue = b.id;
-      }
+      const aName = (a.name || '').toLowerCase();
+      const bName = (b.name || '').toLowerCase();
       
       if (sortOrder === 'asc') {
-        return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+        return aName < bName ? -1 : aName > bName ? 1 : 0;
       } else {
-        return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
+        return aName > bName ? -1 : aName < bName ? 1 : 0;
       }
     });
 
@@ -697,42 +637,6 @@ const syncToLibrariesPage = async () => {
     setAtTop(el.scrollTop <= 0);
     setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
   }, [loading]);
-
-  // FIXED: Calculate actual totals from libraryStats
-  const calculateFetchMetrics = () => {
-    const librariesWithStats = Object.keys(libraryStats).length;
-    const allLibraryIds = new Set(libraries.map(lib => lib.id));
-    const librariesWithoutStats = libraries.length - librariesWithStats;
-    
-    // If we have fetch status data, use that for accuracy
-    if (fetchStatus.completed.length > 0 || fetchStatus.failed.length > 0) {
-      const processedCount = fetchStatus.completed.length + fetchStatus.failed.length;
-      const successCount = fetchStatus.completed.length;
-      const failedCount = fetchStatus.failed.length;
-      const successRate = processedCount > 0 ? Math.round((successCount / processedCount) * 100) : 0;
-      
-      return {
-        processedCount,
-        successCount,
-        failedCount,
-        successRate
-      };
-    }
-    
-    // Otherwise, calculate from library stats
-    const successRate = libraries.length > 0 
-      ? Math.round((librariesWithStats / libraries.length) * 100) 
-      : 0;
-    
-    return {
-      processedCount: librariesWithStats,
-      successCount: librariesWithStats,
-      failedCount: librariesWithoutStats,
-      successRate
-    };
-  };
-
-  const fetchMetrics = calculateFetchMetrics();
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -754,27 +658,8 @@ const syncToLibrariesPage = async () => {
             </Button>
           </div>
         </div>
-        {/* FIXED: Stat cards now show actual counts */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="rounded-lg border p-4 flex items-center justify-between">
-            <div>
-              <div className="text-sm text-gray-500">Total Fetches</div>
-              <div className="text-2xl font-semibold flex items-center gap-2">🔄 {fetchMetrics.processedCount}</div>
-            </div>
-          </div>
-          <div className="rounded-lg border p-4 flex items-center justify-between">
-            <div>
-              <div className="text-sm text-gray-500">Success Rate</div>
-              <div className="text-2xl font-semibold flex items-center gap-2" style={{ color: '#10b981' }}>✓ {fetchMetrics.successRate}%</div>
-            </div>
-          </div>
-          <div className="rounded-lg border p-4 flex items-center justify-between">
-            <div>
-              <div className="text-sm text-gray-500">Failed Fetches</div>
-              <div className="text-2xl font-semibold flex items-center gap-2" style={{ color: '#ef4444' }}>✗ {fetchMetrics.failedCount}</div>
-            </div>
-          </div>
-        </div>
+        
+        {/* EDIT 1: REMOVED 3 STATUS CARDS */}
       </div>
 
       {/* Statistics Controls */}
@@ -824,7 +709,7 @@ const syncToLibrariesPage = async () => {
               Fetch Stats ({selectedLibraries.size})
             </Button>
             <Button 
-              onClick={clearSelectionsAndStats}
+              onClick={handleClearClick}
               variant="outline"
               className="px-6"
             >
@@ -850,7 +735,7 @@ const syncToLibrariesPage = async () => {
         </Alert>
       )}
 
-      {/* Filters Panel */}
+      {/* EDIT 2: Cleaned up Filters Panel - removed Status, Date, Sort dropdowns */}
       <Card>
         <CardContent className="pt-6">
           <div className="flex gap-4 items-center flex-wrap">
@@ -865,37 +750,7 @@ const syncToLibrariesPage = async () => {
               />
             </div>
 
-            {/* Status dropdown (visual-only) */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Status:</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="p-2 border rounded-md"
-              >
-                <option value="All">• All</option>
-                <option value="Success">🟢 Success</option>
-                <option value="Failed">🔴 Failed</option>
-                <option value="Pending">🟡 Pending</option>
-              </select>
-            </div>
-
-            {/* Date range dropdown (visual-only) */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">📅 Date:</span>
-              <select
-                value={dateRange}
-                onChange={(e) => setDateRange(e.target.value)}
-                className="p-2 border rounded-md"
-              >
-                <option value="Today">Today</option>
-                <option value="Last 7 Days">Last 7 Days</option>
-                <option value="Last 30 Days">Last 30 Days</option>
-                <option value="Custom">Custom</option>
-              </select>
-            </div>
-
-            {/* FIXED: Show only fetched filter */}
+            {/* Fetched Only */}
             <Button
               variant={showOnlyFetched ? "default" : "outline"}
               onClick={() => setShowOnlyFetched(!showOnlyFetched)}
@@ -916,22 +771,15 @@ const syncToLibrariesPage = async () => {
               Refresh
             </Button>
 
-            {/* Existing sort controls (unchanged functionality) */}
-            <select 
-              value={sortBy} 
-              onChange={(e) => setSortBy(e.target.value)}
-              className="p-2 border rounded-md"
-            >
-              <option value="name">Sort by Name</option>
-              <option value="views">Sort by Views</option>
-              <option value="watch_time">Sort by Watch Time</option>
-            </select>
+            {/* Sort Order */}
             <Button
               variant="outline"
               onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
             >
               {sortOrder === 'asc' ? '↑' : '↓'}
             </Button>
+            
+            {/* Raw/Formatted Toggle */}
             <Button
               variant={showRawNumbers ? "default" : "outline"}
               onClick={() => setShowRawNumbers(!showRawNumbers)}
@@ -958,7 +806,7 @@ const syncToLibrariesPage = async () => {
                 size="sm"
                 onClick={toggleSelectAll}
               >
-                {selectedLibraries.size === filteredAndSortedLibraries.length ? (
+                {selectedLibraries.size > 0 ? (
                   <>
                     <CheckSquare className="w-4 h-4 mr-2" />
                     Deselect All
@@ -1013,13 +861,13 @@ const syncToLibrariesPage = async () => {
                   <tr className="border-b sticky top-0 bg-white z-10">
                     <th className="text-center p-2 w-[50px] sticky left-0 bg-[#fafafa] text-xs text-slate-500">#</th>
                     <th className="text-left p-2 text-xs">Select</th>
-                    <th className="text-left p-2 text-xs">ID <span className="ml-1 text-gray-400">↕︎</span></th>
-                    <th className="text-left p-2 text-xs">Name <span className="ml-1 text-gray-400">{sortBy === 'name' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕︎'}</span></th>
-                    <th className="text-left p-2 text-xs">Views <span className="ml-1 text-gray-400">{sortBy === 'views' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕︎'}</span></th>
-                    <th className="text-left p-2 text-xs">Watch Time <span className="ml-1 text-gray-400">{sortBy === 'watch_time' ? (sortOrder === 'asc' ? '▲' : '▼') : '↕︎'}</span></th>
-                    <th className="text-left p-2 text-xs">Period <span className="ml-1 text-gray-400">↕︎</span></th>
-                    <th className="text-left p-2 text-xs">Last Updated <span className="ml-1 text-gray-400">↕︎</span></th>
-                    <th className="text-left p-2 text-xs w-[100px]">Actions</th>
+                    <th className="text-left p-2 text-xs">ID</th>
+                    <th className="text-left p-2 text-xs">Name</th>
+                    <th className="text-left p-2 text-xs">Views</th>
+                    <th className="text-left p-2 text-xs">Watch Time</th>
+                    <th className="text-left p-2 text-xs">Period</th>
+                    {/* EDIT 4B: REMOVED Last Updated column */}
+                    <th className="text-left p-2 text-xs w-[80px]">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1090,35 +938,17 @@ const syncToLibrariesPage = async () => {
                             <span className="text-gray-400">-</span>
                           )}
                         </td>
-                        <td className="p-2">
-                          {stats?.last_updated ? (
-                            <div className="flex items-center gap-1">
-                              <Info className="w-3 h-3 text-green-600" />
-                              <span className="text-xs text-green-600">
-                                {formatLastUpdated(stats.last_updated)}
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-gray-400 text-xs">-</span>
-                          )}
-                        </td>
-                        <td className="p-2 w-[100px]">
+                        {/* EDIT 4B: REMOVED Last Updated column */}
+                        <td className="p-2 w-[80px]">
+                          {/* EDIT 4C: Only Eye button, routes to statistics page with date range */}
                           <div className="flex gap-2 justify-end opacity-0 group-hover:opacity-100 transition">
                             <Button
                               variant="outline"
                               className="w-7 h-7 p-0 rounded hover:bg-slate-100"
-                              onClick={() => window.open(`https://dash.bunny.net/stream/${library.id}/library/overview`, '_blank', 'noopener,noreferrer')}
-                              title="View"
+                              onClick={() => window.open(getStatisticsUrl(library.id, stats), '_blank', 'noopener,noreferrer')}
+                              title="View Statistics"
                             >
-                              <span role="img" aria-label="view">👁️</span>
-                            </Button>
-                            <Button
-                              variant="outline"
-                              className="w-7 h-7 p-0 rounded hover:bg-slate-100"
-                              disabled
-                              title="Retry"
-                            >
-                              <span role="img" aria-label="retry">🔄</span>
+                              <Eye className="w-4 h-4" />
                             </Button>
                           </div>
                         </td>
@@ -1132,25 +962,40 @@ const syncToLibrariesPage = async () => {
         </CardContent>
       </Card>
       
-      {/* Data Accuracy Information */}
-      <Card className="bg-blue-50 border-blue-200">
-        <CardContent className="pt-6">
-          <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-blue-600 mt-0.5" />
-            <div className="text-sm text-blue-800">
-              <p className="font-medium mb-2">100% Data Accuracy Features:</p>
-              <ul className="space-y-1 text-xs">
-                <li>• <strong>Timezone Synchronization:</strong> All API calls use UTC timezone matching Bunny.net dashboard</li>
-                <li>• <strong>Precise Date Ranges:</strong> Exact start/end times (00:00:00 to 23:59:59) for complete month coverage</li>
-                <li>• <strong>Raw Numbers:</strong> Toggle to see exact values (e.g., 18,908 instead of 18.9K)</li>
-                <li>• <strong>Data Freshness:</strong> Timestamps show when data was last fetched from Bunny.net API</li>
-                <li>• <strong>API Format Compliance:</strong> Uses Bunny.net's required m-d-Y date format</li>
-                <li>• <strong>Watch Time Format:</strong> Displays in HH:MM:SS format for precise duration tracking</li>
-              </ul>
+      {/* EDIT 5: REMOVED Data Accuracy Information Card */}
+
+      {/* EDIT 6: Clear Confirmation Modal */}
+      {showClearConfirmation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-center mb-4">
+              <AlertCircle className="h-12 w-12 text-amber-500" />
+            </div>
+            <h3 className="text-xl font-semibold text-slate-900 text-center mb-2">
+              Clear Selected Libraries and Stats?
+            </h3>
+            <p className="text-sm text-slate-600 text-center mb-6">
+              This will clear all selected libraries ({selectedLibraries.size}) and their fetched statistics. This action cannot be undone.
+            </p>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => setShowClearConfirmation(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+                onClick={confirmClear}
+              >
+                Yes, Clear
+              </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      )}
 
       {/* Status Popup Modal */}
       {showStatusPopup && (
@@ -1277,7 +1122,6 @@ const syncToLibrariesPage = async () => {
                   </div>
                 )}
 
-                {/* Final Status */}
                 {!syncStatus.isLoading && (syncStatus.completed.length > 0 || syncStatus.failed.length > 0) && (
                   <div className="mt-4 p-3 bg-gray-50 rounded">
                     <p className="font-medium">
@@ -1293,7 +1137,6 @@ const syncToLibrariesPage = async () => {
               </div>
             )}
 
-            {/* Close Button */}
             <div className="flex justify-end mt-6 pt-4 border-t">
               <Button onClick={closeStatusPopup} variant="outline">
                 Close
@@ -1305,6 +1148,5 @@ const syncToLibrariesPage = async () => {
     </div>
   );
 };
-
 
 export default BunnyLibraries;
