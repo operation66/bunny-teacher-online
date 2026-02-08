@@ -948,7 +948,7 @@ const BunnyLibraries = () => {
                               onClick={() => window.open(getStatisticsUrl(library.id, stats), '_blank', 'noopener,noreferrer')}
                               title="View Statistics"
                             >
-                              <Eye className="w-4 h-4" />
+                              <Eye className="w-4 h-4 text-blue-600" />
                             </Button>
                           </div>
                         </td>
@@ -1150,3 +1150,4 @@ const BunnyLibraries = () => {
 };
 
 export default BunnyLibraries;
+
