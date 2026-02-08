@@ -92,12 +92,20 @@ const LibraryConfig = () => {
 
   // Helper function to get library ID from row
   const getLibraryId = (row) => {
-    return row['Library ID'] || row['library_id'] || row['ID'] || row['id'];
+    const id = row['Library ID'] || row['library_id'] || row['ID'] || row['id'];
+    // Convert to number and validate
+    if (id === null || id === undefined || id === '') return null;
+    const numId = typeof id === 'number' ? id : parseInt(String(id).trim(), 10);
+    return isNaN(numId) ? null : numId;
   };
 
-  // Helper function to get API key from row
+  // Helper function to get API key from row - FIXED TO TRIM WHITESPACE
   const getApiKey = (row) => {
-    return row['API Key'] || row['api_key'] || row['API_KEY'] || row['Stream API Key'];
+    const key = row['API Key'] || row['api_key'] || row['API_KEY'] || row['Stream API Key'];
+    if (!key || typeof key !== 'string') return null;
+    const trimmedKey = key.trim();
+    // Validate API key format (should be non-empty after trimming)
+    return trimmedKey.length > 0 ? trimmedKey : null;
   };
 
   // Helper function to check if row has valid data
@@ -163,6 +171,7 @@ const LibraryConfig = () => {
     }
   };
 
+  // FIXED: Excel upload handler with proper validation and error handling
   const handleExcelUpload = async (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -186,8 +195,8 @@ const LibraryConfig = () => {
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
       const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-      // Filter out empty rows
-      const validDataRows = jsonData.filter(row => !isRowEmpty(row));
+      // Filter out empty rows and validate
+      const validDataRows = jsonData.filter(row => !isRowEmpty(row) && isRowValid(row));
 
       // Update total rows (only valid rows count)
       setExcelProgress(prev => ({
@@ -203,17 +212,16 @@ const LibraryConfig = () => {
       for (let index = 0; index < validDataRows.length; index++) {
         const row = validDataRows[index];
         
-        // Get values from columns
+        // Get values from columns with proper trimming
         const libraryId = getLibraryId(row);
         const apiKey = getApiKey(row);
 
-        // Check if row has required fields
+        // Double-check validation (should always pass due to filter above)
         if (!libraryId || !apiKey) {
           console.warn('Skipping row - missing library ID or API key:', row);
           failCount++;
           
-          // Find the original row number in the Excel file (accounting for header and empty rows)
-          const originalRowNumber = jsonData.indexOf(row) + 2; // +2 for header and 0-indexing
+          const originalRowNumber = jsonData.indexOf(row) + 2;
           
           failedRows.push({
             rowNumber: originalRowNumber,
@@ -221,7 +229,6 @@ const LibraryConfig = () => {
             reason: 'Missing Library ID or API Key'
           });
           
-          // Update progress
           setExcelProgress(prev => ({
             ...prev,
             processedRows: index + 1,
@@ -232,14 +239,25 @@ const LibraryConfig = () => {
         }
 
         try {
-          // Update the library config
-          await api.put(`/library-configs/${libraryId}`, {
+          // FIXED: Update the library config and verify the response
+          const response = await api.put(`/library-configs/${libraryId}`, {
             stream_api_key: apiKey,
             is_active: true
           });
+          
+          // CRITICAL FIX: Verify that the API key was actually saved
+          const savedConfig = response.data;
+          if (!savedConfig || !savedConfig.stream_api_key || savedConfig.stream_api_key.trim() !== apiKey.trim()) {
+            throw new Error('API key was not saved correctly on the backend');
+          }
+          
           successCount++;
           
-          // Update progress
+          // Update local state with the verified saved config
+          setConfigs(prev => prev.map(cfg => 
+            cfg.library_id === libraryId ? savedConfig : cfg
+          ));
+          
           setExcelProgress(prev => ({
             ...prev,
             processedRows: index + 1,
@@ -251,13 +269,20 @@ const LibraryConfig = () => {
           
           const originalRowNumber = jsonData.indexOf(row) + 2;
           
+          // More detailed error message
+          let errorMessage = 'Unknown error';
+          if (error.response?.data?.detail) {
+            errorMessage = error.response.data.detail;
+          } else if (error.message) {
+            errorMessage = error.message;
+          }
+          
           failedRows.push({
             rowNumber: originalRowNumber,
             libraryId: libraryId,
-            reason: error.response?.data?.detail || error.message || 'Unknown error'
+            reason: errorMessage
           });
           
-          // Update progress
           setExcelProgress(prev => ({
             ...prev,
             processedRows: index + 1,
@@ -275,11 +300,11 @@ const LibraryConfig = () => {
       }));
 
       setMessage({
-        type: 'success',
+        type: successCount > 0 ? 'success' : 'error',
         text: `Excel upload complete! Updated ${successCount} libraries. ${failCount > 0 ? `Failed: ${failCount}` : ''}`
       });
 
-      // Refresh the list after a short delay
+      // Refresh the list after a short delay to get the latest state from backend
       setTimeout(() => {
         fetchConfigs();
       }, 1000);
@@ -513,7 +538,7 @@ const LibraryConfig = () => {
           </div>
         </div>
 
-        {/* Stat Cards - Removed Last Update */}
+        {/* Stat Cards */}
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4">
             <div className="text-sm text-indigo-600 font-medium flex items-center gap-2">
@@ -541,7 +566,7 @@ const LibraryConfig = () => {
         </Alert>
       )}
 
-      {/* Search & Filters - Removed Type Filter and Settings Button */}
+      {/* Search & Filters */}
       <div className="rounded-lg border border-slate-200 bg-white p-4 mb-4">
         <div className="flex flex-col md:flex-row md:items-center gap-3">
           <div className="relative flex-1 min-w-[240px]">
@@ -720,7 +745,7 @@ const LibraryConfig = () => {
                               )}
                             </div>
                             {!isConfigured(cfg) && (
-                              <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+                              <div className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block mt-2">
                                 Add an API key to activate this library.
                               </div>
                             )}
@@ -836,7 +861,7 @@ const LibraryConfig = () => {
           )}
         </div>
 
-        {/* Right: Quick Actions (40%) - Updated with Clear API Keys and removed Bulk Edit */}
+        {/* Right: Quick Actions (40%) */}
         <div className="lg:col-span-2">
           <div className="bg-[#f8fafc] p-6 border border-slate-200 rounded-xl">
             <h3 className="text-sm font-semibold text-slate-700 mb-3">Quick Actions & Info</h3>
