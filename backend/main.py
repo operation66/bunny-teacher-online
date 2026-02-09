@@ -25,6 +25,12 @@ logger = logging.getLogger(__name__)
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
 
+# Import and create financial tables
+from financial_models import Base as FinancialBase
+FinancialBase.metadata.create_all(bind=engine)
+
+logger.info("All database tables created successfully")
+
 # CRITICAL: Create financial tables
 import financial_models
 financial_models.Base.metadata.create_all(bind=engine)
@@ -41,6 +47,7 @@ dev_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://bunny-teacher-online.onrender.com",
+    "https://bunny-teacher-online.vercel.app",
 ]
 extra_origins = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
 allowed_origins = dev_origins + [o.strip() for o in extra_origins if o.strip()]
