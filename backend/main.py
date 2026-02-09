@@ -1401,3 +1401,724 @@ async def get_libraries_with_history(
     except Exception as e:
         logger.error(f"Get libraries with history error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+# ============================================
+# ADD TO main.py - FINANCIAL SYSTEM ENDPOINTS
+# ============================================
+# Copy everything below and paste at the END of your main.py file
+# (before the last line if there's a closing statement)
+
+# Import financial modules at the top of main.py after existing imports
+from financial_models import (
+    Stage, Section, Subject, StageSectionSubject,
+    TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment
+)
+from financial_schemas import (
+    Stage as StageSchema, StageCreate, StageUpdate,
+    Section as SectionSchema, SectionCreate,
+    Subject as SubjectSchema, SubjectCreate,
+    TeacherAssignment as TeacherAssignmentSchema,
+    TeacherAssignmentCreate, TeacherAssignmentUpdate,
+    TeacherAssignmentWithDetails,
+    AutoMatchResponse, AutoMatchResult,
+    FinancialPeriod as FinancialPeriodSchema,
+    FinancialPeriodCreate, FinancialPeriodUpdate,
+    SectionRevenue as SectionRevenueSchema,
+    SectionRevenueCreate, SectionRevenueUpdate,
+    SectionRevenueWithDetails,
+    TeacherPaymentWithDetails,
+    FinancialData,
+    CalculatePaymentsRequest,
+    CalculatePaymentsResponse
+)
+from financial_utils import (
+    parse_library_name,
+    calculate_teacher_payment,
+    calculate_section_order_percentages
+)
+
+# ============================================
+# STAGE ENDPOINTS
+# ============================================
+
+@app.get("/stages/", response_model=List[StageSchema])
+def get_stages(db: Session = Depends(get_db)):
+    """Get all stages"""
+    return db.query(Stage).order_by(Stage.display_order).all()
+
+@app.post("/stages/", response_model=StageSchema)
+def create_stage(stage: StageCreate, db: Session = Depends(get_db)):
+    """Create a new stage"""
+    # Check if code already exists
+    existing = db.query(Stage).filter(Stage.code == stage.code).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Stage with code {stage.code} already exists")
+    
+    db_stage = Stage(**stage.dict())
+    db.add(db_stage)
+    db.commit()
+    db.refresh(db_stage)
+    return db_stage
+
+@app.put("/stages/{stage_id}", response_model=StageSchema)
+def update_stage(stage_id: int, stage: StageUpdate, db: Session = Depends(get_db)):
+    """Update a stage"""
+    db_stage = db.query(Stage).filter(Stage.id == stage_id).first()
+    if not db_stage:
+        raise HTTPException(status_code=404, detail="Stage not found")
+    
+    for field, value in stage.dict(exclude_unset=True).items():
+        setattr(db_stage, field, value)
+    
+    db.commit()
+    db.refresh(db_stage)
+    return db_stage
+
+@app.delete("/stages/{stage_id}")
+def delete_stage(stage_id: int, db: Session = Depends(get_db)):
+    """Delete a stage"""
+    db_stage = db.query(Stage).filter(Stage.id == stage_id).first()
+    if not db_stage:
+        raise HTTPException(status_code=404, detail="Stage not found")
+    
+    db.delete(db_stage)
+    db.commit()
+    return {"message": "Stage deleted successfully"}
+
+# ============================================
+# SECTION ENDPOINTS
+# ============================================
+
+@app.get("/sections/", response_model=List[SectionSchema])
+def get_sections(stage_id: int = None, db: Session = Depends(get_db)):
+    """Get all sections, optionally filtered by stage"""
+    query = db.query(Section)
+    if stage_id:
+        query = query.filter(Section.stage_id == stage_id)
+    return query.all()
+
+@app.post("/sections/", response_model=SectionSchema)
+def create_section(section: SectionCreate, db: Session = Depends(get_db)):
+    """Create a new section"""
+    db_section = Section(**section.dict())
+    db.add(db_section)
+    db.commit()
+    db.refresh(db_section)
+    return db_section
+
+@app.delete("/sections/{section_id}")
+def delete_section(section_id: int, db: Session = Depends(get_db)):
+    """Delete a section"""
+    db_section = db.query(Section).filter(Section.id == section_id).first()
+    if not db_section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    
+    db.delete(db_section)
+    db.commit()
+    return {"message": "Section deleted successfully"}
+
+# ============================================
+# SUBJECT ENDPOINTS
+# ============================================
+
+@app.get("/subjects/", response_model=List[SubjectSchema])
+def get_subjects(db: Session = Depends(get_db)):
+    """Get all subjects"""
+    return db.query(Subject).all()
+
+@app.post("/subjects/", response_model=SubjectSchema)
+def create_subject(subject: SubjectCreate, db: Session = Depends(get_db)):
+    """Create a new subject"""
+    # Check if code already exists
+    existing = db.query(Subject).filter(Subject.code == subject.code).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Subject with code {subject.code} already exists")
+    
+    db_subject = Subject(**subject.dict())
+    db.add(db_subject)
+    db.commit()
+    db.refresh(db_subject)
+    return db_subject
+
+@app.delete("/subjects/{subject_id}")
+def delete_subject(subject_id: int, db: Session = Depends(get_db)):
+    """Delete a subject"""
+    db_subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    if not db_subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    
+    db.delete(db_subject)
+    db.commit()
+    return {"message": "Subject deleted successfully"}
+
+# ============================================
+# TEACHER ASSIGNMENT ENDPOINTS
+# ============================================
+
+@app.get("/teacher-assignments/", response_model=List[TeacherAssignmentWithDetails])
+def get_teacher_assignments(
+    stage_id: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get all teacher assignments with details"""
+    query = db.query(TeacherAssignment)
+    if stage_id:
+        query = query.filter(TeacherAssignment.stage_id == stage_id)
+    
+    assignments = query.all()
+    
+    # Add details
+    result = []
+    for assignment in assignments:
+        stage = db.query(Stage).filter(Stage.id == assignment.stage_id).first()
+        section = db.query(Section).filter(Section.id == assignment.section_id).first() if assignment.section_id else None
+        subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
+        
+        assignment_dict = {
+            **assignment.__dict__,
+            "stage_name": stage.name if stage else None,
+            "section_name": section.name if section else None,
+            "subject_name": subject.name if subject else None,
+            "subject_is_common": subject.is_common if subject else None
+        }
+        result.append(TeacherAssignmentWithDetails(**assignment_dict))
+    
+    return result
+
+@app.post("/teacher-assignments/", response_model=TeacherAssignmentSchema)
+def create_teacher_assignment(
+    assignment: TeacherAssignmentCreate,
+    db: Session = Depends(get_db)
+):
+    """Create a new teacher assignment"""
+    db_assignment = TeacherAssignment(**assignment.dict())
+    db.add(db_assignment)
+    db.commit()
+    db.refresh(db_assignment)
+    return db_assignment
+
+@app.put("/teacher-assignments/{assignment_id}", response_model=TeacherAssignmentSchema)
+def update_teacher_assignment(
+    assignment_id: int,
+    assignment: TeacherAssignmentUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update teacher assignment (tax rate, revenue percentage)"""
+    db_assignment = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
+    if not db_assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    
+    for field, value in assignment.dict(exclude_unset=True).items():
+        setattr(db_assignment, field, value)
+    
+    db_assignment.updated_at = datetime.now(pytz.UTC)
+    db.commit()
+    db.refresh(db_assignment)
+    return db_assignment
+
+@app.delete("/teacher-assignments/{assignment_id}")
+def delete_teacher_assignment(assignment_id: int, db: Session = Depends(get_db)):
+    """Delete a teacher assignment"""
+    db_assignment = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
+    if not db_assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    
+    db.delete(db_assignment)
+    db.commit()
+    return {"message": "Assignment deleted successfully"}
+
+@app.post("/teacher-assignments/auto-match", response_model=AutoMatchResponse)
+async def auto_match_teachers(db: Session = Depends(get_db)):
+    """Auto-match teachers to subjects based on library names"""
+    try:
+        # Get all libraries
+        libraries = await get_bunny_libraries()
+        
+        # Get all stages, subjects
+        stages = {s.code: s for s in db.query(Stage).all()}
+        subjects = {s.code: s for s in db.query(Subject).all()}
+        sections = {(sec.stage_id, sec.code): sec for sec in db.query(Section).all()}
+        
+        results = []
+        matched_count = 0
+        
+        for lib in libraries:
+            lib_id = lib.get("id")
+            lib_name = lib.get("name")
+            
+            # Parse library name
+            stage_code, section_code, subject_code = parse_library_name(lib_name)
+            
+            # Try to match
+            if not stage_code or not subject_code:
+                results.append(AutoMatchResult(
+                    library_id=lib_id,
+                    library_name=lib_name,
+                    stage_code=stage_code,
+                    section_code=section_code,
+                    subject_code=subject_code,
+                    matched=False,
+                    message="Could not parse library name"
+                ))
+                continue
+            
+            # Find stage
+            stage = stages.get(stage_code)
+            if not stage:
+                results.append(AutoMatchResult(
+                    library_id=lib_id,
+                    library_name=lib_name,
+                    stage_code=stage_code,
+                    section_code=section_code,
+                    subject_code=subject_code,
+                    matched=False,
+                    message=f"Stage {stage_code} not found"
+                ))
+                continue
+            
+            # Find subject
+            subject = subjects.get(subject_code)
+            if not subject:
+                results.append(AutoMatchResult(
+                    library_id=lib_id,
+                    library_name=lib_name,
+                    stage_code=stage_code,
+                    section_code=section_code,
+                    subject_code=subject_code,
+                    matched=False,
+                    message=f"Subject {subject_code} not found"
+                ))
+                continue
+            
+            # Find section (if section-specific subject)
+            section = None
+            if section_code and not subject.is_common:
+                section = sections.get((stage.id, section_code))
+                if not section:
+                    results.append(AutoMatchResult(
+                        library_id=lib_id,
+                        library_name=lib_name,
+                        stage_code=stage_code,
+                        section_code=section_code,
+                        subject_code=subject_code,
+                        matched=False,
+                        message=f"Section {section_code} not found for stage {stage_code}"
+                    ))
+                    continue
+            
+            # Check if assignment already exists
+            existing = db.query(TeacherAssignment).filter(
+                TeacherAssignment.library_id == lib_id,
+                TeacherAssignment.stage_id == stage.id,
+                TeacherAssignment.subject_id == subject.id
+            ).first()
+            
+            if existing:
+                results.append(AutoMatchResult(
+                    library_id=lib_id,
+                    library_name=lib_name,
+                    stage_code=stage_code,
+                    section_code=section_code,
+                    subject_code=subject_code,
+                    matched=True,
+                    message="Already assigned"
+                ))
+                matched_count += 1
+                continue
+            
+            # Create assignment
+            assignment = TeacherAssignment(
+                library_id=lib_id,
+                library_name=lib_name,
+                stage_id=stage.id,
+                section_id=section.id if section else None,
+                subject_id=subject.id,
+                tax_rate=0.0,
+                revenue_percentage=1.0
+            )
+            db.add(assignment)
+            
+            results.append(AutoMatchResult(
+                library_id=lib_id,
+                library_name=lib_name,
+                stage_code=stage_code,
+                section_code=section_code,
+                subject_code=subject_code,
+                matched=True,
+                message="Successfully matched"
+            ))
+            matched_count += 1
+        
+        db.commit()
+        
+        return AutoMatchResponse(
+            total_libraries=len(libraries),
+            matched=matched_count,
+            unmatched=len(libraries) - matched_count,
+            results=results
+        )
+    
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Auto-match error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================
+# FINANCIAL PERIOD ENDPOINTS
+# ============================================
+
+@app.get("/financial-periods/", response_model=List[FinancialPeriodSchema])
+def get_financial_periods(db: Session = Depends(get_db)):
+    """Get all financial periods"""
+    return db.query(FinancialPeriod).order_by(FinancialPeriod.year.desc(), FinancialPeriod.created_at.desc()).all()
+
+@app.post("/financial-periods/", response_model=FinancialPeriodSchema)
+def create_financial_period(period: FinancialPeriodCreate, db: Session = Depends(get_db)):
+    """Create a new financial period"""
+    # Check if name already exists
+    existing = db.query(FinancialPeriod).filter(FinancialPeriod.name == period.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Period with name '{period.name}' already exists")
+    
+    db_period = FinancialPeriod(**period.dict())
+    db.add(db_period)
+    db.commit()
+    db.refresh(db_period)
+    return db_period
+
+@app.put("/financial-periods/{period_id}", response_model=FinancialPeriodSchema)
+def update_financial_period(
+    period_id: int,
+    period: FinancialPeriodUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update a financial period"""
+    db_period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+    if not db_period:
+        raise HTTPException(status_code=404, detail="Period not found")
+    
+    for field, value in period.dict(exclude_unset=True).items():
+        setattr(db_period, field, value)
+    
+    db.commit()
+    db.refresh(db_period)
+    return db_period
+
+@app.delete("/financial-periods/{period_id}")
+def delete_financial_period(period_id: int, db: Session = Depends(get_db)):
+    """Delete a financial period"""
+    db_period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+    if not db_period:
+        raise HTTPException(status_code=404, detail="Period not found")
+    
+    db.delete(db_period)
+    db.commit()
+    return {"message": "Period deleted successfully"}
+
+# ============================================
+# SECTION REVENUE ENDPOINTS
+# ============================================
+
+@app.post("/section-revenues/", response_model=SectionRevenueSchema)
+def create_or_update_section_revenue(
+    revenue: SectionRevenueCreate,
+    db: Session = Depends(get_db)
+):
+    """Create or update section revenue"""
+    # Check if already exists
+    existing = db.query(SectionRevenue).filter(
+        SectionRevenue.period_id == revenue.period_id,
+        SectionRevenue.stage_id == revenue.stage_id,
+        SectionRevenue.section_id == revenue.section_id
+    ).first()
+    
+    if existing:
+        # Update
+        existing.total_orders = revenue.total_orders
+        existing.total_revenue_egp = revenue.total_revenue_egp
+        existing.updated_at = datetime.now(pytz.UTC)
+        db.commit()
+        db.refresh(existing)
+        return existing
+    else:
+        # Create
+        db_revenue = SectionRevenue(**revenue.dict())
+        db.add(db_revenue)
+        db.commit()
+        db.refresh(db_revenue)
+        return db_revenue
+
+# ============================================
+# FINANCIAL DATA & CALCULATION ENDPOINTS
+# ============================================
+
+@app.get("/financials/{period_id}/{stage_id}", response_model=FinancialData)
+def get_financial_data(
+    period_id: int,
+    stage_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all financial data for a period and stage"""
+    # Get period
+    period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+    if not period:
+        raise HTTPException(status_code=404, detail="Period not found")
+    
+    # Get stage
+    stage = db.query(Stage).filter(Stage.id == stage_id).first()
+    if not stage:
+        raise HTTPException(status_code=404, detail="Stage not found")
+    
+    # Get sections for this stage
+    sections = db.query(Section).filter(Section.stage_id == stage_id).all()
+    
+    # Get section revenues
+    section_revenues = db.query(SectionRevenue).filter(
+        SectionRevenue.period_id == period_id,
+        SectionRevenue.stage_id == stage_id
+    ).all()
+    
+    section_revenues_with_details = []
+    for rev in section_revenues:
+        section = db.query(Section).filter(Section.id == rev.section_id).first()
+        rev_dict = {
+            **rev.__dict__,
+            "stage_name": stage.name,
+            "section_name": section.name if section else None
+        }
+        section_revenues_with_details.append(SectionRevenueWithDetails(**rev_dict))
+    
+    # Get teacher assignments for this stage
+    assignments = db.query(TeacherAssignment).filter(
+        TeacherAssignment.stage_id == stage_id
+    ).all()
+    
+    assignments_with_details = []
+    for assignment in assignments:
+        section = db.query(Section).filter(Section.id == assignment.section_id).first() if assignment.section_id else None
+        subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
+        
+        assignment_dict = {
+            **assignment.__dict__,
+            "stage_name": stage.name,
+            "section_name": section.name if section else None,
+            "subject_name": subject.name if subject else None,
+            "subject_is_common": subject.is_common if subject else None
+        }
+        assignments_with_details.append(TeacherAssignmentWithDetails(**assignment_dict))
+    
+    # Get teacher payments
+    payments = db.query(TeacherPayment).filter(
+        TeacherPayment.period_id == period_id,
+        TeacherPayment.stage_id == stage_id
+    ).all()
+    
+    payments_with_details = []
+    for payment in payments:
+        section = db.query(Section).filter(Section.id == payment.section_id).first()
+        subject = db.query(Subject).filter(Subject.id == payment.subject_id).first()
+        
+        payment_dict = {
+            **payment.__dict__,
+            "stage_name": stage.name,
+            "section_name": section.name if section else None,
+            "subject_name": subject.name if subject else None,
+            "subject_is_common": subject.is_common if subject else None
+        }
+        payments_with_details.append(TeacherPaymentWithDetails(**payment_dict))
+    
+    return FinancialData(
+        period=period,
+        stage=stage,
+        sections=sections,
+        section_revenues=section_revenues_with_details,
+        teacher_assignments=assignments_with_details,
+        teacher_payments=payments_with_details
+    )
+
+@app.post("/calculate-payments/{period_id}/{stage_id}", response_model=CalculatePaymentsResponse)
+async def calculate_payments(
+    period_id: int,
+    stage_id: int,
+    db: Session = Depends(get_db)
+):
+    """Calculate teacher payments for a period and stage"""
+    try:
+        # Get period and stage
+        period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+        if not period:
+            raise HTTPException(status_code=404, detail="Period not found")
+        
+        stage = db.query(Stage).filter(Stage.id == stage_id).first()
+        if not stage:
+            raise HTTPException(status_code=404, detail="Stage not found")
+        
+        # Get section revenues
+        section_revenues = db.query(SectionRevenue).filter(
+            SectionRevenue.period_id == period_id,
+            SectionRevenue.stage_id == stage_id
+        ).all()
+        
+        if not section_revenues:
+            raise HTTPException(
+                status_code=400,
+                detail="No revenue data found. Please add revenue data first."
+            )
+        
+        # Calculate section order percentages
+        sections_data = [
+            {"section_id": rev.section_id, "total_orders": rev.total_orders}
+            for rev in section_revenues
+        ]
+        section_order_percentages = calculate_section_order_percentages(sections_data)
+        
+        # Get teacher assignments for this stage
+        assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.stage_id == stage_id
+        ).all()
+        
+        if not assignments:
+            raise HTTPException(
+                status_code=400,
+                detail="No teacher assignments found. Please assign teachers first."
+            )
+        
+        # Delete existing payments for this period/stage
+        db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == period_id,
+            TeacherPayment.stage_id == stage_id
+        ).delete()
+        
+        # Get watch time data from historical stats
+        # Map library_id to total watch time
+        watch_time_map = {}
+        for assignment in assignments:
+            # Get total watch time from library_historical_stats
+            stats = db.query(models.LibraryHistoricalStats).filter(
+                models.LibraryHistoricalStats.library_id == assignment.library_id,
+                models.LibraryHistoricalStats.year == period.year
+            ).all()
+            
+            total_watch_time = sum(s.total_watch_time_seconds for s in stats)
+            watch_time_map[assignment.library_id] = total_watch_time
+        
+        # Calculate payments
+        payments_created = []
+        total_payment_sum = 0.0
+        
+        for revenue in section_revenues:
+            section = db.query(Section).filter(Section.id == revenue.section_id).first()
+            
+            # Get assignments for this section
+            section_assignments = [
+                a for a in assignments
+                if (a.section_id == revenue.section_id) or  # Section-specific
+                   (a.section_id is None)  # Common subject
+            ]
+            
+            # Calculate total watch time for this section
+            total_section_watch_time = sum(
+                watch_time_map.get(a.library_id, 0)
+                for a in section_assignments
+            )
+            
+            for assignment in section_assignments:
+                teacher_watch_time = watch_time_map.get(assignment.library_id, 0)
+                
+                # Get subject to check if common
+                subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
+                
+                # Calculate section order percentage (for common subjects)
+                section_order_pct = 1.0
+                if subject and subject.is_common:
+                    section_order_pct = section_order_percentages.get(revenue.section_id, 1.0)
+                
+                # Calculate payment
+                payment_calc = calculate_teacher_payment(
+                    section_revenue=revenue.total_revenue_egp,
+                    teacher_watch_time_seconds=teacher_watch_time,
+                    total_section_watch_time_seconds=total_section_watch_time,
+                    revenue_percentage=assignment.revenue_percentage,
+                    tax_rate=assignment.tax_rate,
+                    section_order_percentage=section_order_pct
+                )
+                
+                # Create payment record
+                payment = TeacherPayment(
+                    period_id=period_id,
+                    assignment_id=assignment.id,
+                    library_id=assignment.library_id,
+                    library_name=assignment.library_name,
+                    stage_id=stage_id,
+                    section_id=revenue.section_id,
+                    subject_id=assignment.subject_id,
+                    total_watch_time_seconds=teacher_watch_time,
+                    watch_time_percentage=payment_calc['watch_time_percentage'],
+                    section_total_orders=revenue.total_orders,
+                    section_order_percentage=payment_calc['section_order_percentage'],
+                    base_revenue=payment_calc['base_revenue'],
+                    revenue_percentage_applied=payment_calc['revenue_percentage_applied'],
+                    calculated_revenue=payment_calc['calculated_revenue'],
+                    tax_rate_applied=payment_calc['tax_rate_applied'],
+                    tax_amount=payment_calc['tax_amount'],
+                    final_payment=payment_calc['final_payment']
+                )
+                db.add(payment)
+                payments_created.append(payment)
+                total_payment_sum += payment.final_payment
+        
+        db.commit()
+        
+        # Get payments with details
+        payments_with_details = []
+        for payment in payments_created:
+            db.refresh(payment)
+            section = db.query(Section).filter(Section.id == payment.section_id).first()
+            subject = db.query(Subject).filter(Subject.id == payment.subject_id).first()
+            
+            payment_dict = {
+                **payment.__dict__,
+                "stage_name": stage.name,
+                "section_name": section.name if section else None,
+                "subject_name": subject.name if subject else None,
+                "subject_is_common": subject.is_common if subject else None
+            }
+            payments_with_details.append(TeacherPaymentWithDetails(**payment_dict))
+        
+        return CalculatePaymentsResponse(
+            success=True,
+            message=f"Successfully calculated payments for {len(payments_created)} teachers",
+            payments_calculated=len(payments_created),
+            total_payment=total_payment_sum,
+            payments=payments_with_details
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Payment calculation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
+def get_teacher_payments(period_id: int, db: Session = Depends(get_db)):
+    """Get all teacher payments for a period"""
+    payments = db.query(TeacherPayment).filter(
+        TeacherPayment.period_id == period_id
+    ).all()
+    
+    payments_with_details = []
+    for payment in payments:
+        stage = db.query(Stage).filter(Stage.id == payment.stage_id).first()
+        section = db.query(Section).filter(Section.id == payment.section_id).first()
+        subject = db.query(Subject).filter(Subject.id == payment.subject_id).first()
+        
+        payment_dict = {
+            **payment.__dict__,
+            "stage_name": stage.name if stage else None,
+            "section_name": section.name if section else None,
+            "subject_name": subject.name if subject else None,
+            "subject_is_common": subject.is_common if subject else None
+        }
+        payments_with_details.append(TeacherPaymentWithDetails(**payment_dict))
+    
+    return payments_with_details
