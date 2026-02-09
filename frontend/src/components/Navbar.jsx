@@ -14,6 +14,8 @@ const Navbar = () => {
     { path: '/library-config', label: 'API Config', icon: Settings },
     { path: '/dashboard', label: 'Dashboard', icon: TrendingUp },
     { path: '/users', label: 'Users', icon: Users },
+    { key: '/settings', label: 'Settings', icon: '⚙️' },
+    { key: '/financials', label: 'Financials', icon: '💰' },
   ];
 
   const navItems = user ? baseItems.filter(i => (user.allowedPages||[]).includes(i.path)) : [];
