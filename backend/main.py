@@ -1453,17 +1453,30 @@ def get_stages(db: Session = Depends(get_db)):
 @app.post("/stages/", response_model=StageSchema)
 def create_stage(stage: StageCreate, db: Session = Depends(get_db)):
     """Create a new stage"""
-    # Check if code already exists
-    existing = db.query(Stage).filter(Stage.code == stage.code).first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Stage with code {stage.code} already exists")
-    
-    db_stage = Stage(**stage.dict())
-    db.add(db_stage)
-    db.commit()
-    db.refresh(db_stage)
-    return db_stage
-
+    try:
+        # Log what we received
+        logger.info(f"Creating stage with data: {stage.dict()}")
+        
+        # Check if code already exists
+        existing = db.query(Stage).filter(Stage.code == stage.code).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Stage with code {stage.code} already exists")
+        
+        db_stage = Stage(**stage.dict())
+        db.add(db_stage)
+        db.commit()
+        db.refresh(db_stage)
+        
+        logger.info(f"Stage created successfully: {db_stage.id}")
+        return db_stage
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating stage: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create stage: {str(e)}")
+        
 @app.put("/stages/{stage_id}", response_model=StageSchema)
 def update_stage(stage_id: int, stage: StageUpdate, db: Session = Depends(get_db)):
     """Update a stage"""
