@@ -6,6 +6,7 @@ except ImportError:
     from typing_extensions import Literal
 from enum import Enum
 from datetime import datetime
+from financial_schemas import *
 
 # Library Config schemas
 class LibraryConfigBase(BaseModel):
