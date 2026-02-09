@@ -61,18 +61,35 @@ const Settings = () => {
   // ============================================
   // STAGE FUNCTIONS
   // ============================================
-  const handleCreateStage = async (e) => {
-    e.preventDefault();
-    try {
-      await financialApi.createStage(newStage);
-      showMessage('Stage created successfully');
-      setNewStage({ code: '', name: '', display_order: 0 });
-      loadAllData();
-    } catch (error) {
-      showMessage('Error creating stage: ' + (error.response?.data?.detail || error.message), 'error');
-    }
-  };
-
+const handleCreateStage = async (e) => {
+  e.preventDefault();
+  
+  // VALIDATION: Ensure all fields are present and valid
+  if (!newStage.code || !newStage.name) {
+    showMessage('Code and Name are required', 'error');
+    return;
+  }
+  
+  try {
+    // Create payload with correct types
+    const payload = {
+      code: newStage.code.toUpperCase().trim(),
+      name: newStage.name.trim(),
+      display_order: parseInt(newStage.display_order) || 0
+    };
+    
+    console.log('Creating stage with payload:', payload); // DEBUG
+    
+    await financialApi.createStage(payload);
+    showMessage('Stage created successfully');
+    setNewStage({ code: '', name: '', display_order: 0 });
+    loadAllData();
+  } catch (error) {
+    console.error('Create stage error:', error.response?.data); // DEBUG
+    showMessage('Error creating stage: ' + (error.response?.data?.detail || error.message), 'error');
+  }
+};
+  
   const handleDeleteStage = async (stageId) => {
     if (!window.confirm('Are you sure? This will delete all sections and assignments for this stage.')) return;
     try {
