@@ -17,6 +17,26 @@ import schemas
 import pytz
 from database import engine, get_db, SessionLocal
 from bunny_service import get_bunny_stats, get_bunny_libraries, get_library_monthly_stats
+from financial_models import Stage, Section, Subject, TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment
+from financial_schemas import (
+    Stage as StageSchema, StageCreate, StageUpdate,
+    Section as SectionSchema, SectionCreate,
+    Subject as SubjectSchema, SubjectCreate,
+    TeacherAssignment as TeacherAssignmentSchema,
+    TeacherAssignmentCreate, TeacherAssignmentUpdate,
+    TeacherAssignmentWithDetails,
+    AutoMatchResponse, AutoMatchResult,
+    FinancialPeriod as FinancialPeriodSchema,
+    FinancialPeriodCreate, FinancialPeriodUpdate,
+    SectionRevenue as SectionRevenueSchema,
+    SectionRevenueCreate, SectionRevenueUpdate,
+    SectionRevenueWithDetails,
+    TeacherPaymentWithDetails,
+    FinancialData,
+    CalculatePaymentsRequest,
+    CalculatePaymentsResponse
+)
+from financial_utils import parse_library_name, calculate_teacher_payment, calculate_section_order_percentages
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
