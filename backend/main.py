@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
 
+# CRITICAL: Create financial tables
+import financial_models
+financial_models.Base.metadata.create_all(bind=engine)
+
 app = FastAPI(title="Elkheta Teacher Performance Dashboard")
 
 load_dotenv()
