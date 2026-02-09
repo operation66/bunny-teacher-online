@@ -10,6 +10,8 @@ import Dashboard from './pages/Dashboard';
 import TestTailwind from './test-tailwind';
 import SignIn from './pages/SignIn';
 import Users from './pages/Users';
+import Settings from './pages/Settings';
+import Financials from './pages/Financials';
 
 function App() {
   return (
@@ -25,6 +27,8 @@ function App() {
             <Route path="/bunny-libraries" element={<ProtectedRoute path="/bunny-libraries"><BunnyLibraries /></ProtectedRoute>} />
             <Route path="/library-config" element={<ProtectedRoute path="/library-config"><LibraryConfig /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute path="/dashboard"><Dashboard /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/financials" element={<ProtectedRoute><Financials /></ProtectedRoute>} />
             <Route path="/test" element={<TestTailwind />} />
           </Routes>
         </main>
