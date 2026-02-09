@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, Users, Upload, BarChart3, TrendingUp, Video, Settings, Database } from 'lucide-react';
+import { Home, Users, Upload, BarChart3, TrendingUp, Video, Settings as SettingsIcon, Database, DollarSign } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
@@ -11,11 +11,11 @@ const Navbar = () => {
   const baseItems = [
     { path: '/libraries', label: 'Libraries', icon: Database },
     { path: '/bunny-libraries', label: 'Fetch Stats', icon: Video },
-    { path: '/library-config', label: 'API Config', icon: Settings },
+    { path: '/library-config', label: 'API Config', icon: SettingsIcon },
     { path: '/dashboard', label: 'Dashboard', icon: TrendingUp },
     { path: '/users', label: 'Users', icon: Users },
-    { key: '/settings', label: 'Settings', icon: '⚙️' },
-    { key: '/financials', label: 'Financials', icon: '💰' },
+    { path: '/settings', label: 'Settings', icon: SettingsIcon },
+    { path: '/financials', label: 'Financials', icon: DollarSign },
   ];
 
   const navItems = user ? baseItems.filter(i => (user.allowedPages||[]).includes(i.path)) : [];
@@ -47,15 +47,11 @@ const Navbar = () => {
               </Link>
             );
           })}
-
-          {/* Sign In button - only shown when NOT logged in */}
           {!user && (
             <Link to="/signin" style={styles.navLink}>
               <span>Sign In</span>
             </Link>
           )}
-
-          {/* Sign Out button - only shown when logged in */}
           {user && (
             <button
               onClick={() => {
