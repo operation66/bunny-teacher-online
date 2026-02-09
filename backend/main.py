@@ -36,6 +36,7 @@ dev_origins = [
     "http://127.0.0.1:3001",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://bunny-teacher-online.onrender.com",
 ]
 extra_origins = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
 allowed_origins = dev_origins + [o.strip() for o in extra_origins if o.strip()]
