@@ -25,4 +25,6 @@ export const PAGES = [
   { key: '/bunny-libraries', label: 'Fetch Stats' },
   { key: '/library-config', label: 'API Config' },
   { key: '/dashboard', label: 'Dashboard' },
+  { key: '/settings', label: 'Settings' },
+  { key: '/financials', label: 'Financials' },
 ];
