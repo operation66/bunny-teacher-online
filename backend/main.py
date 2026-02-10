@@ -1434,40 +1434,6 @@ async def get_libraries_with_history(
         logger.error(f"Get libraries with history error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 # ============================================
-# ADD TO main.py - FINANCIAL SYSTEM ENDPOINTS
-# ============================================
-# Copy everything below and paste at the END of your main.py file
-# (before the last line if there's a closing statement)
-
-# Import financial modules at the top of main.py after existing imports
-from financial_models import (
-    Stage, Section, Subject, StageSectionSubject,
-    TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment
-)
-from financial_schemas import (
-    Stage as StageSchema, StageCreate, StageUpdate,
-    Section as SectionSchema, SectionCreate,
-    Subject as SubjectSchema, SubjectCreate,
-    TeacherAssignment as TeacherAssignmentSchema,
-    TeacherAssignmentCreate, TeacherAssignmentUpdate,
-    TeacherAssignmentWithDetails,
-    AutoMatchResponse, AutoMatchResult,
-    FinancialPeriod as FinancialPeriodSchema,
-    FinancialPeriodCreate, FinancialPeriodUpdate,
-    SectionRevenue as SectionRevenueSchema,
-    SectionRevenueCreate, SectionRevenueUpdate,
-    SectionRevenueWithDetails,
-    TeacherPaymentWithDetails,
-    FinancialData,
-    CalculatePaymentsRequest,
-    CalculatePaymentsResponse
-)
-from financial_utils import (
-    parse_library_name,
-    calculate_teacher_payment,
-    calculate_section_order_percentages
-)
-
 # ============================================
 # STAGE ENDPOINTS
 # ============================================
