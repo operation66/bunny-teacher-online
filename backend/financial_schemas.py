@@ -1,6 +1,3 @@
-# NEW FILE: backend/financial_schemas.py
-# Pydantic schemas for financial system API validation
-
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
@@ -24,7 +21,7 @@ class StageUpdate(BaseModel):
 
 class Stage(StageBase):
     id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -43,7 +40,7 @@ class SectionCreate(SectionBase):
 
 class Section(SectionBase):
     id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -62,7 +59,7 @@ class SubjectCreate(SubjectBase):
 
 class Subject(SubjectBase):
     id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -75,10 +72,10 @@ class TeacherAssignmentBase(BaseModel):
     library_id: int
     library_name: str
     stage_id: int
-    section_id: Optional[int] = None  # NULL for common subjects
+    section_id: Optional[int] = None
     subject_id: int
-    tax_rate: float = Field(0.0, ge=0.0, le=1.0, description="Tax rate (0.0 to 1.0)")
-    revenue_percentage: float = Field(1.0, ge=0.0, le=1.0, description="Revenue % (0.0 to 1.0)")
+    tax_rate: float = Field(0.0, ge=0.0, le=1.0)
+    revenue_percentage: float = Field(1.0, ge=0.0, le=1.0)
 
 class TeacherAssignmentCreate(TeacherAssignmentBase):
     pass
@@ -89,8 +86,8 @@ class TeacherAssignmentUpdate(BaseModel):
 
 class TeacherAssignment(TeacherAssignmentBase):
     id: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -139,7 +136,7 @@ class FinancialPeriodUpdate(BaseModel):
 
 class FinancialPeriod(FinancialPeriodBase):
     id: int
-    created_at: datetime
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -164,8 +161,8 @@ class SectionRevenueUpdate(BaseModel):
 
 class SectionRevenue(SectionRevenueBase):
     id: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
@@ -197,7 +194,7 @@ class TeacherPayment(BaseModel):
     tax_rate_applied: float
     tax_amount: float
     final_payment: float
-    created_at: datetime
+    created_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
