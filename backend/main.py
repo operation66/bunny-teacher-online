@@ -12,12 +12,20 @@ from dateutil.relativedelta import relativedelta
 import os
 from dotenv import load_dotenv
 
+# MUST load env vars FIRST before anything else
+load_dotenv()
+
 import models
 import schemas
 import pytz
 from database import engine, get_db, SessionLocal
 from bunny_service import get_bunny_stats, get_bunny_libraries, get_library_monthly_stats
-from financial_models import Stage, Section, Subject, TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment
+
+from financial_models import (
+    Stage, Section, Subject, StageSectionSubject,
+    TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment,
+    Base as FinancialBase
+)
 from financial_schemas import (
     Stage as StageSchema, StageCreate, StageUpdate,
     Section as SectionSchema, SectionCreate,
@@ -42,24 +50,26 @@ from financial_utils import parse_library_name, calculate_teacher_payment, calcu
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create database tables
-models.Base.metadata.create_all(bind=engine)
+# Create ALL database tables on startup - BEFORE app is created
+try:
+    logger.info("Creating main database tables...")
+    models.Base.metadata.create_all(bind=engine)
+    logger.info("✅ Main tables created")
+except Exception as e:
+    logger.error(f"❌ Failed to create main tables: {e}")
 
-# Import and create financial tables
-from financial_models import Base as FinancialBase
-FinancialBase.metadata.create_all(bind=engine)
+try:
+    logger.info("Creating financial database tables...")
+    FinancialBase.metadata.create_all(bind=engine)
+    logger.info("✅ Financial tables created")
+except Exception as e:
+    logger.error(f"❌ Failed to create financial tables: {e}")
 
-logger.info("All database tables created successfully")
-
-# CRITICAL: Create financial tables
-import financial_models
-financial_models.Base.metadata.create_all(bind=engine)
-
+# Create FastAPI app
 app = FastAPI(title="Elkheta Teacher Performance Dashboard")
 
-load_dotenv()
-# Allow localhost in dev and optionally additional origins from env
-dev_origins = [
+# CORS - hardcoded + env var
+allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
@@ -69,19 +79,20 @@ dev_origins = [
     "https://bunny-teacher-online.onrender.com",
     "https://bunny-teacher-online.vercel.app",
 ]
-extra_origins = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
-allowed_origins = dev_origins + [o.strip() for o in extra_origins if o.strip()]
+extra = os.getenv("ALLOWED_ORIGINS", "")
+if extra:
+    allowed_origins += [o.strip() for o in extra.split(",") if o.strip()]
 
-# Add CORS middleware
+logger.info(f"CORS allowed origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"^http:\/\/(localhost|127\.0\.0\.1):\d+$",
+    allow_origin_regex=r"^https?:\/\/(localhost|127\.0\.0\.1|\S+\.vercel\.app|\S+\.onrender\.com)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 # Upsert Teachers from Bunny libraries
 @app.post("/teachers/upsert-from-bunny/", response_model=schemas.UpsertTeachersResponse)
 async def upsert_teachers_from_bunny(db: Session = Depends(get_db)):
