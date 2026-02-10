@@ -1449,19 +1449,27 @@ async def get_libraries_with_history(
 # STAGE ENDPOINTS
 # ============================================
 
-@app.get("/stages/", response_model=List[StageSchema])
+@app.get("/stages/")
 def get_stages(db: Session = Depends(get_db)):
     """Get all stages"""
-    return db.query(Stage).order_by(Stage.display_order).all()
+    stages = db.query(Stage).order_by(Stage.display_order).all()
+    return [
+        {
+            "id": s.id,
+            "code": s.code,
+            "name": s.name,
+            "display_order": s.display_order,
+            "created_at": s.created_at.isoformat() if s.created_at else None
+        }
+        for s in stages
+    ]
 
-@app.post("/stages/", response_model=StageSchema)
+@app.post("/stages/")
 def create_stage(stage: StageCreate, db: Session = Depends(get_db)):
     """Create a new stage"""
     try:
-        # Log what we received
         logger.info(f"Creating stage with data: {stage.dict()}")
         
-        # Check if code already exists
         existing = db.query(Stage).filter(Stage.code == stage.code).first()
         if existing:
             raise HTTPException(status_code=400, detail=f"Stage with code {stage.code} already exists")
@@ -1472,7 +1480,15 @@ def create_stage(stage: StageCreate, db: Session = Depends(get_db)):
         db.refresh(db_stage)
         
         logger.info(f"Stage created successfully: {db_stage.id}")
-        return db_stage
+        
+        # Return plain dict instead of ORM object to avoid serialization error
+        return {
+            "id": db_stage.id,
+            "code": db_stage.code,
+            "name": db_stage.name,
+            "display_order": db_stage.display_order,
+            "created_at": db_stage.created_at.isoformat() if db_stage.created_at else None
+        }
         
     except HTTPException:
         raise
@@ -1510,22 +1526,41 @@ def delete_stage(stage_id: int, db: Session = Depends(get_db)):
 # SECTION ENDPOINTS
 # ============================================
 
-@app.get("/sections/", response_model=List[SectionSchema])
+@app.get("/sections/")
 def get_sections(stage_id: int = None, db: Session = Depends(get_db)):
-    """Get all sections, optionally filtered by stage"""
     query = db.query(Section)
     if stage_id:
         query = query.filter(Section.stage_id == stage_id)
-    return query.all()
+    sections = query.all()
+    return [
+        {
+            "id": s.id,
+            "stage_id": s.stage_id,
+            "code": s.code,
+            "name": s.name,
+            "created_at": s.created_at.isoformat() if s.created_at else None
+        }
+        for s in sections
+    ]
 
-@app.post("/sections/", response_model=SectionSchema)
+@app.post("/sections/")
 def create_section(section: SectionCreate, db: Session = Depends(get_db)):
     """Create a new section"""
-    db_section = Section(**section.dict())
-    db.add(db_section)
-    db.commit()
-    db.refresh(db_section)
-    return db_section
+    try:
+        db_section = Section(**section.dict())
+        db.add(db_section)
+        db.commit()
+        db.refresh(db_section)
+        return {
+            "id": db_section.id,
+            "stage_id": db_section.stage_id,
+            "code": db_section.code,
+            "name": db_section.name,
+            "created_at": db_section.created_at.isoformat() if db_section.created_at else None
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/sections/{section_id}")
 def delete_section(section_id: int, db: Session = Depends(get_db)):
@@ -1542,24 +1577,42 @@ def delete_section(section_id: int, db: Session = Depends(get_db)):
 # SUBJECT ENDPOINTS
 # ============================================
 
-@app.get("/subjects/", response_model=List[SubjectSchema])
+@app.get("/subjects/")
 def get_subjects(db: Session = Depends(get_db)):
-    """Get all subjects"""
-    return db.query(Subject).all()
+    subjects = db.query(Subject).all()
+    return [
+        {
+            "id": s.id,
+            "code": s.code,
+            "name": s.name,
+            "is_common": s.is_common,
+            "created_at": s.created_at.isoformat() if s.created_at else None
+        }
+        for s in subjects
+    ]
 
-@app.post("/subjects/", response_model=SubjectSchema)
+@app.post("/subjects/")
 def create_subject(subject: SubjectCreate, db: Session = Depends(get_db)):
-    """Create a new subject"""
-    # Check if code already exists
-    existing = db.query(Subject).filter(Subject.code == subject.code).first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Subject with code {subject.code} already exists")
-    
-    db_subject = Subject(**subject.dict())
-    db.add(db_subject)
-    db.commit()
-    db.refresh(db_subject)
-    return db_subject
+    try:
+        existing = db.query(Subject).filter(Subject.code == subject.code).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Subject with code {subject.code} already exists")
+        db_subject = Subject(**subject.dict())
+        db.add(db_subject)
+        db.commit()
+        db.refresh(db_subject)
+        return {
+            "id": db_subject.id,
+            "code": db_subject.code,
+            "name": db_subject.name,
+            "is_common": db_subject.is_common,
+            "created_at": db_subject.created_at.isoformat() if db_subject.created_at else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/subjects/{subject_id}")
 def delete_subject(subject_id: int, db: Session = Depends(get_db)):
