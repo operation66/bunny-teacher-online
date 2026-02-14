@@ -7,32 +7,24 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import financialApi from '../services/financial_api';
 import {
   Settings as SettingsIcon, Plus, Trash2, Save, Users,
-  BookOpen, GraduationCap, CheckCircle, X, Edit2,
+  BookOpen, GraduationCap, CheckCircle, X, Edit2, AlertTriangle,
 } from 'lucide-react';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Small helpers
-// ─────────────────────────────────────────────────────────────────────────────
 const pct  = (v) => `${(v * 100).toFixed(2)}%`;
 const fNum = (s) => parseFloat(s) || 0;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Edit-assignment modal  (all fields editable)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── EditModal ─────────────────────────────────────────────────────────────────
 const EditModal = ({ assignment, stages, sections, subjects, onSave, onClose }) => {
   const [form, setForm] = useState({
     stage_id:           assignment.stage_id,
-    section_id:         assignment.section_id ?? '',   // '' means "none / common"
+    section_id:         assignment.section_id ?? '',
     subject_id:         assignment.subject_id,
     tax_rate:           (assignment.tax_rate * 100).toFixed(2),
     revenue_percentage: (assignment.revenue_percentage * 100).toFixed(2),
   });
   const [saving, setSaving] = useState(false);
-
   const modalSections = sections.filter(s => s.stage_id === Number(form.stage_id));
-
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -43,115 +35,65 @@ const EditModal = ({ assignment, stages, sections, subjects, onSave, onClose }) 
         tax_rate:           fNum(form.tax_rate) / 100,
         revenue_percentage: fNum(form.revenue_percentage) / 100,
       });
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
-
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 className="text-lg font-bold text-gray-900">Edit Assignment</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
         </div>
-
         <div className="px-6 py-5 space-y-4">
-          {/* Library (read-only display) */}
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-gray-500 mb-1">Library</p>
             <p className="font-medium text-sm text-gray-800">{assignment.library_name}</p>
             <p className="text-xs text-gray-400">ID: {assignment.library_id}</p>
           </div>
-
-          {/* Stage */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Stage</label>
-            <select
-              className="w-full h-10 px-3 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.stage_id}
-              onChange={e => set('stage_id', e.target.value)}
-            >
-              {stages.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
-              ))}
+            <select className="w-full h-10 px-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={form.stage_id} onChange={e => set('stage_id', e.target.value)}>
+              {stages.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
             </select>
           </div>
-
-          {/* Section */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Section <span className="text-gray-400 font-normal">(leave empty for common subjects)</span>
-            </label>
-            <select
-              className="w-full h-10 px-3 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.section_id}
-              onChange={e => set('section_id', e.target.value)}
-            >
-              <option value="">None (Common – both GEN &amp; LANG)</option>
-              {modalSections.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
-              ))}
+            <label className="block text-sm font-medium text-gray-700 mb-1">Section <span className="text-gray-400 font-normal">(empty = common)</span></label>
+            <select className="w-full h-10 px-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={form.section_id} onChange={e => set('section_id', e.target.value)}>
+              <option value="">None (Common)</option>
+              {modalSections.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
             </select>
           </div>
-
-          {/* Subject */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
-            <select
-              className="w-full h-10 px-3 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              value={form.subject_id}
-              onChange={e => set('subject_id', e.target.value)}
-            >
-              {subjects.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.code}){s.is_common ? ' — Common' : ''}
-                </option>
-              ))}
+            <select className="w-full h-10 px-3 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              value={form.subject_id} onChange={e => set('subject_id', e.target.value)}>
+              {subjects.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code}){s.is_common ? ' — Common' : ''}</option>)}
             </select>
           </div>
-
-          {/* Tax + Revenue */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tax Rate %</label>
               <div className="relative">
-                <Input
-                  type="number" step="0.1" min="0" max="100"
-                  value={form.tax_rate}
-                  onChange={e => set('tax_rate', e.target.value)}
-                  className="pr-8"
-                />
+                <Input type="number" step="0.1" min="0" max="100" value={form.tax_rate}
+                  onChange={e => set('tax_rate', e.target.value)} className="pr-8"/>
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">%</span>
               </div>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Revenue %</label>
               <div className="relative">
-                <Input
-                  type="number" step="0.1" min="0" max="100"
-                  value={form.revenue_percentage}
-                  onChange={e => set('revenue_percentage', e.target.value)}
-                  className="pr-8"
-                />
+                <Input type="number" step="0.1" min="0" max="100" value={form.revenue_percentage}
+                  onChange={e => set('revenue_percentage', e.target.value)} className="pr-8"/>
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">%</span>
               </div>
             </div>
           </div>
         </div>
-
-        {/* Footer */}
         <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-          >
-            <Save className="w-4 h-4 mr-2" />
-            {saving ? 'Saving…' : 'Save Changes'}
+          <Button onClick={handleSave} disabled={saving} className="flex-1 bg-green-600 hover:bg-green-700 text-white">
+            <Save className="w-4 h-4 mr-2"/>{saving ? 'Saving…' : 'Save Changes'}
           </Button>
           <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
         </div>
@@ -160,9 +102,110 @@ const EditModal = ({ assignment, stages, sections, subjects, onSave, onClose }) 
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main component
-// ─────────────────────────────────────────────────────────────────────────────
+// ── BulkEditModal ─────────────────────────────────────────────────────────────
+const BulkEditModal = ({ count, onSave, onClose }) => {
+  const [tax,    setTax]    = useState('');
+  const [rev,    setRev]    = useState('');
+  const [saving, setSaving] = useState(false);
+  const handleSave = async () => {
+    if (tax === '' && rev === '') { alert('Enter at least one value to update.'); return; }
+    setSaving(true);
+    try {
+      const payload = {};
+      if (tax !== '') payload.tax_rate           = fNum(tax) / 100;
+      if (rev !== '') payload.revenue_percentage = fNum(rev) / 100;
+      await onSave(payload);
+    } finally { setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-lg font-bold text-gray-900">Bulk Edit <span className="text-blue-600">({count} selected)</span></h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-gray-500">Leave a field blank to keep existing values unchanged.</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tax Rate %</label>
+              <div className="relative">
+                <Input type="number" step="0.1" min="0" max="100" placeholder="e.g. 5"
+                  value={tax} onChange={e => setTax(e.target.value)} className="pr-8"/>
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">%</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Revenue %</label>
+              <div className="relative">
+                <Input type="number" step="0.1" min="0" max="100" placeholder="e.g. 95"
+                  value={rev} onChange={e => setRev(e.target.value)} className="pr-8"/>
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
+          <Button onClick={handleSave} disabled={saving} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white">
+            <Save className="w-4 h-4 mr-2"/>{saving ? 'Applying…' : `Apply to ${count} Assignments`}
+          </Button>
+          <Button variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── UnmatchedModal ────────────────────────────────────────────────────────────
+const UnmatchedModal = ({ results, onClose }) => {
+  const unmatched = results.filter(r => !r.matched);
+  const matched   = results.filter(r =>  r.matched).length;
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+              <AlertTriangle className="w-5 h-5 text-orange-600"/>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Auto-Match Results</h2>
+              <p className="text-sm text-gray-500">
+                <span className="text-green-600 font-semibold">{matched} matched</span>
+                {' · '}
+                <span className="text-orange-600 font-semibold">{unmatched.length} unmatched</span>
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-6 py-4">
+          <p className="text-sm text-gray-600 mb-4">
+            These libraries could not be matched. Common fix: add the missing stage, section, or subject in the tabs above, then run Auto-Match again.
+          </p>
+          <div className="space-y-2">
+            {unmatched.map((r, i) => (
+              <div key={i} className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                <p className="font-medium text-sm text-gray-800">{r.library_name}</p>
+                <p className="text-xs text-orange-700 mt-0.5">{r.message}</p>
+                <div className="flex gap-2 mt-1.5 flex-wrap">
+                  {r.stage_code   && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Stage: {r.stage_code}</span>}
+                  {r.section_code && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Section: {r.section_code}</span>}
+                  {r.subject_code && <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Subject: {r.subject_code}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex-shrink-0">
+          <Button onClick={onClose} className="w-full bg-gray-800 hover:bg-gray-900 text-white">OK, close</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Main Settings ─────────────────────────────────────────────────────────────
 const Settings = () => {
   const [stages,      setStages]      = useState([]);
   const [sections,    setSections]    = useState([]);
@@ -170,120 +213,104 @@ const Settings = () => {
   const [assignments, setAssignments] = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [activeTab,   setActiveTab]   = useState('stages');
-  const [filterStage, setFilterStage] = useState('');
-  const [editTarget,  setEditTarget]  = useState(null);  // assignment being edited
   const [msg,         setMsg]         = useState({ text: '', type: '' });
 
   const [newStage,   setNewStage]   = useState({ code: '', name: '', display_order: 0 });
   const [newSection, setNewSection] = useState({ stage_id: '', code: '', name: '' });
   const [newSubject, setNewSubject] = useState({ code: '', name: '', is_common: false });
 
-  // ── message helper ──────────────────────────────────────────────────────
-  const flash = useCallback((text, type = 'success') => {
+  // Assignments tab state
+  const [filterStage,      setFilterStage]      = useState('');
+  const [filterSection,    setFilterSection]    = useState('');
+  const [filterSubject,    setFilterSubject]    = useState('');
+  const [selectedIds,      setSelectedIds]      = useState(new Set());
+  const [editTarget,       setEditTarget]       = useState(null);
+  const [showBulkEdit,     setShowBulkEdit]     = useState(false);
+  const [unmatchedResults, setUnmatchedResults] = useState(null);
+
+  const flash  = useCallback((text, type = 'success') => {
     setMsg({ text, type });
     setTimeout(() => setMsg({ text: '', type: '' }), 5000);
   }, []);
+  const errMsg = (err) => err?.response?.data?.detail || err?.message || 'Unknown error';
 
-  const errMsg = (err) =>
-    err?.response?.data?.detail || err?.message || 'Unknown error';
-
-  // ── load ────────────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
       const [st, sec, sub, asg] = await Promise.all([
-        financialApi.getStages(),
-        financialApi.getSections(),
-        financialApi.getSubjects(),
-        financialApi.getTeacherAssignments(),
+        financialApi.getStages(), financialApi.getSections(),
+        financialApi.getSubjects(), financialApi.getTeacherAssignments(),
       ]);
-      setStages(st);
-      setSections(sec);
-      setSubjects(sub);
-      setAssignments(asg);
-    } catch (err) {
-      flash('Error loading data: ' + errMsg(err), 'error');
-    } finally {
-      setLoading(false);
-    }
+      setStages(st); setSections(sec); setSubjects(sub); setAssignments(asg);
+    } catch (err) { flash('Error loading: ' + errMsg(err), 'error'); }
+    finally { setLoading(false); }
   }, [flash]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // ── STAGES ──────────────────────────────────────────────────────────────
+  // ── Stage CRUD ────────────────────────────────────────────────────────────
   const createStage = async (e) => {
     e.preventDefault();
-    if (!newStage.code || !newStage.name) { flash('Code and Name are required', 'error'); return; }
+    if (!newStage.code || !newStage.name) { flash('Code and Name required', 'error'); return; }
     try {
-      await financialApi.createStage({
-        code: newStage.code.toUpperCase().trim(),
-        name: newStage.name.trim(),
-        display_order: parseInt(newStage.display_order) || 0,
-      });
-      flash('Stage created');
-      setNewStage({ code: '', name: '', display_order: 0 });
-      loadAll();
+      await financialApi.createStage({ code: newStage.code.toUpperCase().trim(), name: newStage.name.trim(), display_order: parseInt(newStage.display_order) || 0 });
+      flash('Stage created'); setNewStage({ code: '', name: '', display_order: 0 }); loadAll();
     } catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
-
   const deleteStage = async (id) => {
-    if (!window.confirm('Delete stage and all its sections & assignments?')) return;
+    if (!window.confirm('Delete stage + all its sections & assignments?')) return;
     try { await financialApi.deleteStage(id); flash('Stage deleted'); loadAll(); }
     catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
 
-  // ── SECTIONS ────────────────────────────────────────────────────────────
+  // ── Section CRUD ──────────────────────────────────────────────────────────
   const createSection = async (e) => {
     e.preventDefault();
     if (!newSection.stage_id) { flash('Select a stage', 'error'); return; }
     try {
       await financialApi.createSection({ ...newSection, stage_id: parseInt(newSection.stage_id) });
-      flash('Section created');
-      setNewSection({ stage_id: '', code: '', name: '' });
-      loadAll();
+      flash('Section created'); setNewSection({ stage_id: '', code: '', name: '' }); loadAll();
     } catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
-
   const deleteSection = async (id) => {
     if (!window.confirm('Delete section?')) return;
     try { await financialApi.deleteSection(id); flash('Section deleted'); loadAll(); }
     catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
 
-  // ── SUBJECTS ────────────────────────────────────────────────────────────
+  // ── Subject CRUD ──────────────────────────────────────────────────────────
   const createSubject = async (e) => {
     e.preventDefault();
     try {
       await financialApi.createSubject({ ...newSubject, code: newSubject.code.toUpperCase().trim() });
-      flash('Subject created');
-      setNewSubject({ code: '', name: '', is_common: false });
-      loadAll();
+      flash('Subject created'); setNewSubject({ code: '', name: '', is_common: false }); loadAll();
     } catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
-
   const deleteSubject = async (id) => {
     if (!window.confirm('Delete subject?')) return;
     try { await financialApi.deleteSubject(id); flash('Subject deleted'); loadAll(); }
     catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
 
-  // ── ASSIGNMENTS ─────────────────────────────────────────────────────────
+  // ── Assignment handlers ───────────────────────────────────────────────────
   const autoMatch = async () => {
-    if (!window.confirm('Run auto-match for all 288 libraries? Existing assignments are kept.')) return;
+    if (!window.confirm('Run auto-match for all libraries? Existing assignments are kept.')) return;
     setLoading(true);
     try {
       const r = await financialApi.autoMatchTeachers();
-      flash(`Auto-match done: ${r.matched} matched, ${r.unmatched} unmatched out of ${r.total_libraries} libraries`);
-      loadAll();
+      await loadAll();
+      if (r.results && r.results.some(x => !x.matched)) {
+        setUnmatchedResults(r.results);
+      } else {
+        flash(`Auto-match done: ${r.matched} matched!`);
+      }
     } catch (err) { flash('Auto-match error: ' + errMsg(err), 'error'); setLoading(false); }
   };
 
   const saveEdit = async (id, payload) => {
     try {
       await financialApi.updateTeacherAssignment(id, payload);
-      flash('Assignment updated');
-      setEditTarget(null);
-      loadAll();
+      flash('Updated'); setEditTarget(null); loadAll();
     } catch (err) { flash('Save error: ' + errMsg(err), 'error'); throw err; }
   };
 
@@ -293,48 +320,111 @@ const Settings = () => {
     catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
 
-  const deleteAllAssignments = async () => {
-    const scope = filterStage
-      ? `all ${filteredAssignments.length} assignments for this stage`
-      : `ALL ${assignments.length} assignments`;
-    if (!window.confirm(`Are you sure you want to delete ${scope}? This cannot be undone.`)) return;
-    setLoading(true);
-    let failed = 0;
-    try {
-      await Promise.all(
-        filteredAssignments.map(a =>
-          financialApi.deleteTeacherAssignment(a.id).catch(() => { failed++; })
-        )
-      );
-      const deleted = filteredAssignments.length - failed;
-      flash(`Deleted ${deleted} assignment${deleted !== 1 ? 's' : ''}${failed ? ` (${failed} failed)` : ''}`);
-      loadAll();
-    } catch (err) {
-      flash('Error during delete all: ' + errMsg(err), 'error');
-      setLoading(false);
-    }
+  // ── Filtering ─────────────────────────────────────────────────────────────
+  const filteredAssignments = assignments.filter(a => {
+    if (filterStage   && a.stage_id   !== Number(filterStage))       return false;
+    if (filterSection && String(a.section_id) !== filterSection)     return false;
+    if (filterSubject && a.subject_id !== Number(filterSubject))     return false;
+    return true;
+  });
+
+  // Dynamic section options — only sections of selected stage
+  const sectionOptions = filterStage
+    ? sections.filter(s => s.stage_id === Number(filterStage))
+    : sections;
+
+  // Dynamic subject options — only subjects appearing in stage+section-filtered assignments
+  const baseForSubjects = assignments.filter(a => {
+    if (filterStage   && a.stage_id   !== Number(filterStage))       return false;
+    if (filterSection && String(a.section_id) !== filterSection)     return false;
+    return true;
+  });
+  const subjectIdsInBase = new Set(baseForSubjects.map(a => a.subject_id));
+  const subjectOptions   = subjects.filter(s => subjectIdsInBase.has(s.id));
+
+  const handleFilterStage = (v) => {
+    setFilterStage(v); setFilterSection(''); setFilterSubject(''); setSelectedIds(new Set());
+  };
+  const handleFilterSection = (v) => {
+    setFilterSection(v); setFilterSubject(''); setSelectedIds(new Set());
+  };
+  const handleFilterSubject = (v) => {
+    setFilterSubject(v); setSelectedIds(new Set());
   };
 
-  // ── DERIVED ─────────────────────────────────────────────────────────────
-  const filteredAssignments = filterStage
-    ? assignments.filter(a => a.stage_id === Number(filterStage))
-    : assignments;
+  // ── Selection ─────────────────────────────────────────────────────────────
+  const allSelected = filteredAssignments.length > 0 &&
+    filteredAssignments.every(a => selectedIds.has(a.id));
 
-  // ── SECTION badge colour ─────────────────────────────────────────────────
-  const sectionBadge = (a) => {
-    if (!a.section_name) return <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">—</span>;
-    const isGen = a.section_name.toUpperCase().includes('GEN');
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allSelected) { filteredAssignments.forEach(a => next.delete(a.id)); }
+      else             { filteredAssignments.forEach(a => next.add(a.id));    }
+      return next;
+    });
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectedCount = filteredAssignments.filter(a => selectedIds.has(a.id)).length;
+  const someSelected  = selectedCount > 0;
+
+  // ── Bulk actions ──────────────────────────────────────────────────────────
+  const bulkDelete = async () => {
+    const targets = someSelected
+      ? filteredAssignments.filter(a => selectedIds.has(a.id))
+      : filteredAssignments;
+    if (targets.length === 0) return;
+    const label = someSelected ? `${targets.length} selected` : `all ${targets.length} visible`;
+    if (!window.confirm(`Delete ${label} assignments? This cannot be undone.`)) return;
+    setLoading(true);
+    let failed = 0;
+    await Promise.all(targets.map(a => financialApi.deleteTeacherAssignment(a.id).catch(() => { failed++; })));
+    setSelectedIds(new Set());
+    flash(`Deleted ${targets.length - failed} assignments${failed ? ` (${failed} failed)` : ''}`);
+    loadAll();
+  };
+
+  const applyBulkEdit = async (payload) => {
+    const targets = filteredAssignments.filter(a => selectedIds.has(a.id));
+    if (targets.length === 0) { flash('No assignments selected', 'error'); return; }
+    let failed = 0;
+    await Promise.all(targets.map(a => financialApi.updateTeacherAssignment(a.id, payload).catch(() => { failed++; })));
+    setShowBulkEdit(false); setSelectedIds(new Set());
+    flash(`Updated ${targets.length - failed} assignments${failed ? ` (${failed} failed)` : ''}`);
+    loadAll();
+  };
+
+  // ── Section cell: code bold + name underlined below ───────────────────────
+  const sectionCell = (a) => {
+    if (!a.section_id) {
+      return <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-mono">—</span>;
+    }
+    const secObj  = sections.find(s => s.id === a.section_id);
+    const code    = secObj ? secObj.code : (a.section_name || '?');
+    const name    = secObj ? secObj.name : '';
+    const isGen   = code.toUpperCase().includes('GEN');
     return (
-      <span className={`text-xs px-2 py-0.5 rounded font-mono font-semibold
-        ${isGen ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-        {a.section_name}
-      </span>
+      <div>
+        <span className={`text-xs px-2 py-0.5 rounded font-mono font-bold
+          ${isGen ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+          {code}
+        </span>
+        {name && <div className="text-xs text-gray-400 underline mt-0.5 leading-tight">{name}</div>}
+      </div>
     );
   };
 
-  // ────────────────────────────────────────────────────────────────────────
-  // TAB JSX (inline — NOT inner components, to prevent focus loss on re-render)
-  // ────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // Inline tab JSX (no inner components — prevents focus loss)
+  // ─────────────────────────────────────────────────────────────────────────
   const tabStagesJSX = (
     <div className="space-y-6">
       <Card>
@@ -344,137 +434,106 @@ const Settings = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Code *</label>
-                <Input placeholder="S1, M2, J4" value={newStage.code}
-                  onChange={e => setNewStage({ ...newStage, code: e.target.value.toUpperCase() })} required/>
+                <Input placeholder="S1, M2, J4" value={newStage.code} onChange={e => setNewStage({ ...newStage, code: e.target.value.toUpperCase() })} required/>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <Input placeholder="Senior 1, Middle 2, Junior 4" value={newStage.name}
-                  onChange={e => setNewStage({ ...newStage, name: e.target.value })} required/>
+                <Input placeholder="Senior 1, Middle 2" value={newStage.name} onChange={e => setNewStage({ ...newStage, name: e.target.value })} required/>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Display Order</label>
-                <Input type="number" value={newStage.display_order}
-                  onChange={e => setNewStage({ ...newStage, display_order: parseInt(e.target.value) || 0 })}/>
+                <Input type="number" value={newStage.display_order} onChange={e => setNewStage({ ...newStage, display_order: parseInt(e.target.value) || 0 })}/>
               </div>
             </div>
-            <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
-              <Plus className="w-4 h-4 mr-2"/>Create Stage
-            </Button>
+            <Button type="submit" className="bg-blue-600 hover:bg-blue-700"><Plus className="w-4 h-4 mr-2"/>Create Stage</Button>
           </form>
         </CardContent>
       </Card>
-
       <Card>
         <CardHeader><CardTitle>Existing Stages ({stages.length})</CardTitle></CardHeader>
         <CardContent>
-          {stages.length === 0
-            ? <p className="text-center py-8 text-gray-500">No stages yet.</p>
-            : <div className="space-y-2">
-                {stages.map(s => (
-                  <div key={s.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
-                    <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 bg-blue-100 rounded-lg flex items-center justify-center">
-                        <span className="text-xl font-bold text-blue-600">{s.code}</span>
-                      </div>
-                      <div>
-                        <p className="font-semibold text-gray-800">{s.name}</p>
-                        <p className="text-xs text-gray-400">Order: {s.display_order}</p>
-                      </div>
+          {stages.length === 0 ? <p className="text-center py-8 text-gray-500">No stages yet.</p> : (
+            <div className="space-y-2">
+              {stages.map(s => (
+                <div key={s.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-blue-100 rounded-lg flex items-center justify-center">
+                      <span className="text-xl font-bold text-blue-600">{s.code}</span>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => deleteStage(s.id)}
-                      className="text-red-500 hover:text-red-700 hover:border-red-300">
-                      <Trash2 className="w-4 h-4"/>
-                    </Button>
+                    <div>
+                      <p className="font-semibold text-gray-800">{s.name}</p>
+                      <p className="text-xs text-gray-400">Order: {s.display_order}</p>
+                    </div>
                   </div>
-                ))}
-              </div>
-          }
+                  <Button variant="outline" size="sm" onClick={() => deleteStage(s.id)} className="text-red-500 hover:text-red-700"><Trash2 className="w-4 h-4"/></Button>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
   );
 
-  // ────────────────────────────────────────────────────────────────────────
   const tabSectionsJSX = (
     <div className="space-y-6">
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="w-5 h-5"/>Add New Section</CardTitle></CardHeader>
         <CardContent>
           <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
-            <strong>Section codes:</strong> Use <code className="bg-yellow-100 px-1 rounded">GEN</code> for
-            Arabic-taught subjects and <code className="bg-yellow-100 px-1 rounded">LANG</code> for
-            English-taught subjects. These replace the old AR / EN section names.
+            <strong>Section codes:</strong> Use <code className="bg-yellow-100 px-1 rounded">GEN</code> for Arabic-taught subjects and <code className="bg-yellow-100 px-1 rounded">LANG</code> for English-taught subjects.
           </div>
           <form onSubmit={createSection} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Stage *</label>
-                <select className="w-full h-10 px-3 border rounded-lg text-sm"
-                  value={newSection.stage_id}
-                  onChange={e => setNewSection({ ...newSection, stage_id: e.target.value })} required>
+                <select className="w-full h-10 px-3 border rounded-lg text-sm" value={newSection.stage_id} onChange={e => setNewSection({ ...newSection, stage_id: e.target.value })} required>
                   <option value="">Select stage…</option>
                   {stages.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Code * (GEN / LANG)</label>
-                <Input placeholder="GEN or LANG" value={newSection.code}
-                  onChange={e => setNewSection({ ...newSection, code: e.target.value.toUpperCase() })} required/>
+                <Input placeholder="GEN or LANG" value={newSection.code} onChange={e => setNewSection({ ...newSection, code: e.target.value.toUpperCase() })} required/>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <Input placeholder="General Section, Language Section" value={newSection.name}
-                  onChange={e => setNewSection({ ...newSection, name: e.target.value })} required/>
+                <Input placeholder="General Section, Language Section" value={newSection.name} onChange={e => setNewSection({ ...newSection, name: e.target.value })} required/>
               </div>
             </div>
-            <Button type="submit" className="bg-green-600 hover:bg-green-700">
-              <Plus className="w-4 h-4 mr-2"/>Create Section
-            </Button>
+            <Button type="submit" className="bg-green-600 hover:bg-green-700"><Plus className="w-4 h-4 mr-2"/>Create Section</Button>
           </form>
         </CardContent>
       </Card>
-
       <Card>
         <CardHeader><CardTitle>Existing Sections ({sections.length})</CardTitle></CardHeader>
         <CardContent>
-          {stages.length === 0
-            ? <p className="text-center py-8 text-gray-500">Create stages first.</p>
-            : <div className="space-y-4">
-                {stages.map(stage => {
-                  const ss = sections.filter(s => s.stage_id === stage.id);
-                  return (
-                    <div key={stage.id} className="border rounded-lg p-4">
-                      <p className="font-semibold text-blue-600 mb-3">{stage.name} ({stage.code})</p>
-                      {ss.length === 0
-                        ? <p className="text-sm text-gray-400 italic">No sections yet</p>
-                        : ss.map(sec => (
-                            <div key={sec.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg mb-2">
-                              <div className="flex items-center gap-3">
-                                <span className={`font-mono font-bold px-2 py-0.5 rounded text-sm
-                                  ${sec.code === 'GEN' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                                  {sec.code}
-                                </span>
-                                <span className="text-sm text-gray-700">{sec.name}</span>
-                              </div>
-                              <Button variant="outline" size="sm" onClick={() => deleteSection(sec.id)}
-                                className="text-red-500 hover:text-red-700 hover:border-red-300">
-                                <Trash2 className="w-4 h-4"/>
-                              </Button>
-                            </div>
-                          ))
-                      }
-                    </div>
-                  );
-                })}
-              </div>
-          }
+          {stages.length === 0 ? <p className="text-center py-8 text-gray-500">Create stages first.</p> : (
+            <div className="space-y-4">
+              {stages.map(stage => {
+                const ss = sections.filter(s => s.stage_id === stage.id);
+                return (
+                  <div key={stage.id} className="border rounded-lg p-4">
+                    <p className="font-semibold text-blue-600 mb-3">{stage.name} ({stage.code})</p>
+                    {ss.length === 0 ? <p className="text-sm text-gray-400 italic">No sections yet</p> : ss.map(sec => (
+                      <div key={sec.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg mb-2">
+                        <div className="flex items-center gap-3">
+                          <span className={`font-mono font-bold px-2 py-0.5 rounded text-sm ${sec.code === 'GEN' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{sec.code}</span>
+                          <span className="text-sm text-gray-700">{sec.name}</span>
+                        </div>
+                        <Button variant="outline" size="sm" onClick={() => deleteSection(sec.id)} className="text-red-500 hover:text-red-700"><Trash2 className="w-4 h-4"/></Button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
   );
 
-  // ────────────────────────────────────────────────────────────────────────
   const tabSubjectsJSX = (
     <div className="space-y-6">
       <Card>
@@ -484,63 +543,44 @@ const Settings = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Code *</label>
-                <Input placeholder="AR, EN, ISC, BIO, MATH…" value={newSubject.code}
-                  onChange={e => setNewSubject({ ...newSubject, code: e.target.value.toUpperCase() })} required/>
+                <Input placeholder="AR, EN, ISC, BIO, MATH…" value={newSubject.code} onChange={e => setNewSubject({ ...newSubject, code: e.target.value.toUpperCase() })} required/>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <Input placeholder="Arabic, Biology, Mathematics…" value={newSubject.name}
-                  onChange={e => setNewSubject({ ...newSubject, name: e.target.value })} required/>
+                <Input placeholder="Arabic, Biology, Mathematics…" value={newSubject.name} onChange={e => setNewSubject({ ...newSubject, name: e.target.value })} required/>
               </div>
               <div className="flex items-center pt-6">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={newSubject.is_common}
-                    onChange={e => setNewSubject({ ...newSubject, is_common: e.target.checked })}
-                    className="w-4 h-4 rounded text-blue-600"/>
+                  <input type="checkbox" checked={newSubject.is_common} onChange={e => setNewSubject({ ...newSubject, is_common: e.target.checked })} className="w-4 h-4 rounded text-blue-600"/>
                   <span className="text-sm font-medium text-gray-700">Common (GEN + LANG)</span>
                 </label>
               </div>
             </div>
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-              <strong>Common subjects</strong> (AR, EN, HX, S.S) are taught in <em>all</em> sections —
-              auto-match will create one row per section for each library.<br/>
-              <strong>Section subjects</strong> (ISC, BIO, CHEM, PHYS, MATH…) are specific to
-              GEN or LANG based on the <code className="bg-blue-100 px-1 rounded">AR</code> /
-              <code className="bg-blue-100 px-1 rounded">EN</code> indicator after the subject
-              code in the library name.
+              <strong>Common subjects</strong> (AR, EN, HX, S.S) appear in all sections — auto-match creates one row per section.<br/>
+              <strong>Section subjects</strong> (ISC, BIO, CHEM, PHYS, MATH…) are specific to GEN or LANG.
             </div>
-            <Button type="submit" className="bg-purple-600 hover:bg-purple-700">
-              <Plus className="w-4 h-4 mr-2"/>Create Subject
-            </Button>
+            <Button type="submit" className="bg-purple-600 hover:bg-purple-700"><Plus className="w-4 h-4 mr-2"/>Create Subject</Button>
           </form>
         </CardContent>
       </Card>
-
       <Card>
         <CardHeader><CardTitle>Existing Subjects ({subjects.length})</CardTitle></CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {[
-              { label: 'Common Subjects', filter: true,  colour: 'purple' },
-              { label: 'Section Subjects', filter: false, colour: 'green'  },
-            ].map(({ label, filter, colour }) => (
+            {[{ label: 'Common Subjects', isCommon: true, colour: 'purple' }, { label: 'Section Subjects', isCommon: false, colour: 'green' }].map(({ label, isCommon, colour }) => (
               <div key={label} className="border rounded-lg p-4">
                 <p className={`font-semibold text-lg mb-3 text-${colour}-600`}>{label}</p>
-                {subjects.filter(s => s.is_common === filter).map(sub => (
+                {subjects.filter(s => s.is_common === isCommon).map(sub => (
                   <div key={sub.id} className={`flex items-center justify-between p-3 bg-${colour}-50 rounded-lg mb-2`}>
                     <div className="flex items-center gap-3">
                       <span className={`font-mono font-bold text-${colour}-600`}>{sub.code}</span>
                       <span className="text-sm text-gray-700">{sub.name}</span>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => deleteSubject(sub.id)}
-                      className="text-red-500 hover:text-red-700">
-                      <Trash2 className="w-4 h-4"/>
-                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => deleteSubject(sub.id)} className="text-red-500 hover:text-red-700"><Trash2 className="w-4 h-4"/></Button>
                   </div>
                 ))}
-                {subjects.filter(s => s.is_common === filter).length === 0 && (
-                  <p className="text-sm text-gray-400 italic">None yet</p>
-                )}
+                {subjects.filter(s => s.is_common === isCommon).length === 0 && <p className="text-sm text-gray-400 italic">None yet</p>}
               </div>
             ))}
           </div>
@@ -549,78 +589,94 @@ const Settings = () => {
     </div>
   );
 
-  // ────────────────────────────────────────────────────────────────────────
   const tabAssignmentsJSX = (
-    <div className="space-y-6">
-      {/* Info + auto-match button */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Users className="w-5 h-5"/>Teacher Assignments</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Alert className="bg-blue-50 border-blue-200">
-            <AlertDescription className="text-sm leading-relaxed">
-              <strong>Parsing rules:</strong><br/>
-              • <code>S1-AR-…</code> → AR is the <em>subject</em> (Arabic, common → both GEN &amp; LANG)<br/>
-              • <code>S1-ISC-AR-…</code> → ISC is the subject, AR means <strong>GEN section</strong><br/>
-              • <code>S1-BIO-EN-…</code> → BIO is the subject, EN means <strong>LANG section</strong><br/>
-              • Default Revenue: <strong>95%</strong> · Default Tax: <strong>0%</strong>
-            </AlertDescription>
-          </Alert>
+    <div className="space-y-5">
 
+      {/* Auto-match */}
+      <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><Users className="w-5 h-5"/>Teacher Assignments</CardTitle></CardHeader>
+        <CardContent>
           <div className="flex items-center flex-wrap gap-4">
             <Button onClick={autoMatch} disabled={loading} className="bg-blue-600 hover:bg-blue-700">
-              <CheckCircle className="w-4 h-4 mr-2"/>
-              {loading ? 'Running…' : 'Auto-Match All Libraries'}
+              <CheckCircle className="w-4 h-4 mr-2"/>{loading ? 'Running…' : 'Auto-Match All Libraries'}
             </Button>
-            <span className="text-sm text-gray-500">
-              Total assignments: <strong>{assignments.length}</strong>
-            </span>
+            <span className="text-sm text-gray-500">Total: <strong>{assignments.length}</strong> assignments</span>
           </div>
         </CardContent>
       </Card>
 
-      {/* Filter + Delete All */}
+      {/* Filters — 3 dynamic dropdowns */}
       <Card>
         <CardContent className="pt-4 pb-3">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Filter by Stage:</label>
-              <select className="h-9 px-3 border rounded-lg text-sm min-w-[200px]"
-                value={filterStage} onChange={e => setFilterStage(e.target.value)}>
-                <option value="">All Stages ({assignments.length})</option>
-                {stages.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({assignments.filter(a => a.stage_id === s.id).length})
-                  </option>
-                ))}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Stage</label>
+              <select className="w-full h-9 px-3 border rounded-lg text-sm" value={filterStage} onChange={e => handleFilterStage(e.target.value)}>
+                <option value="">All Stages</option>
+                {stages.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
               </select>
             </div>
-            {filteredAssignments.length > 0 && (
-              <Button
-                variant="outline"
-                onClick={deleteAllAssignments}
-                disabled={loading}
-                className="text-red-600 border-red-300 hover:bg-red-50 hover:border-red-500"
-              >
-                <Trash2 className="w-4 h-4 mr-2"/>
-                Delete {filterStage ? 'Stage' : 'All'} ({filteredAssignments.length})
-              </Button>
-            )}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Section</label>
+              <select className="w-full h-9 px-3 border rounded-lg text-sm" value={filterSection} onChange={e => handleFilterSection(e.target.value)} disabled={sectionOptions.length === 0}>
+                <option value="">All Sections</option>
+                {sectionOptions.map(s => <option key={s.id} value={String(s.id)}>{s.name} ({s.code})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Subject</label>
+              <select className="w-full h-9 px-3 border rounded-lg text-sm" value={filterSubject} onChange={e => handleFilterSubject(e.target.value)} disabled={subjectOptions.length === 0}>
+                <option value="">All Subjects</option>
+                {subjectOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+              </select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Bulk action bar */}
+      <Card>
+        <CardContent className="pt-3 pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-600">
+                Showing <strong>{filteredAssignments.length}</strong>
+                {someSelected && <> · <span className="text-blue-600 font-semibold">{selectedCount} selected</span></>}
+              </span>
+              {someSelected && (
+                <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-400 hover:text-gray-600 underline">clear</button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {someSelected && (
+                <Button size="sm" onClick={() => setShowBulkEdit(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                  <Edit2 className="w-3.5 h-3.5 mr-1.5"/>Bulk Edit ({selectedCount})
+                </Button>
+              )}
+              {filteredAssignments.length > 0 && (
+                <Button size="sm" variant="outline" onClick={bulkDelete} disabled={loading}
+                  className="text-red-600 border-red-300 hover:bg-red-50 hover:border-red-500">
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5"/>
+                  {someSelected ? `Delete Selected (${selectedCount})` : `Delete All (${filteredAssignments.length})`}
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Table */}
       <Card>
-        <CardHeader>
-          <CardTitle>Assignments ({filteredAssignments.length})</CardTitle>
-        </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b">
+                  <th className="px-4 py-3 w-10">
+                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded text-blue-600 cursor-pointer"
+                      title={allSelected ? 'Deselect all' : 'Select all visible'}/>
+                  </th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Library</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Stage</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Section</th>
@@ -631,46 +687,47 @@ const Settings = () => {
                 </tr>
               </thead>
               <tbody>
-                {filteredAssignments.map(a => (
-                  <tr key={a.id} className="border-b hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-gray-800 text-sm leading-tight">{a.library_name}</p>
-                      <p className="text-xs text-gray-400">ID: {a.library_id}</p>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
-                        {a.stage_name}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">{sectionBadge(a)}</td>
-                    <td className="px-4 py-3">
-                      <span className="font-mono font-semibold text-gray-800">{a.subject_name}</span>
-                      {a.subject_is_common && (
-                        <span className="ml-1 text-xs text-purple-500">(common)</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono text-gray-700">{pct(a.tax_rate)}</td>
-                    <td className="px-4 py-3 text-right font-mono text-gray-700">{pct(a.revenue_percentage)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-2">
-                        <Button size="sm" variant="outline" onClick={() => setEditTarget(a)}
-                          className="hover:bg-blue-50 hover:border-blue-300">
-                          <Edit2 className="w-3.5 h-3.5 mr-1"/>Edit
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => deleteAssignment(a.id)}
-                          className="text-red-500 hover:text-red-700 hover:border-red-300">
-                          <Trash2 className="w-3.5 h-3.5"/>
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filteredAssignments.map(a => {
+                  const isSelected = selectedIds.has(a.id);
+                  return (
+                    <tr key={a.id} onClick={() => toggleSelect(a.id)}
+                      className={`border-b cursor-pointer transition-colors
+                        ${isSelected ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'}`}>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(a.id)}
+                          className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-800 text-sm leading-tight">{a.library_name}</p>
+                        <p className="text-xs text-gray-400">ID: {a.library_id}</p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">{a.stage_name}</span>
+                      </td>
+                      <td className="px-4 py-3">{sectionCell(a)}</td>
+                      <td className="px-4 py-3">
+                        <span className="font-mono font-semibold text-gray-800">{a.subject_name}</span>
+                        {a.subject_is_common && <span className="ml-1 text-xs text-purple-500">(common)</span>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-gray-700">{pct(a.tax_rate)}</td>
+                      <td className="px-4 py-3 text-right font-mono text-gray-700">{pct(a.revenue_percentage)}</td>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setEditTarget(a)} className="hover:bg-blue-50 hover:border-blue-300">
+                            <Edit2 className="w-3.5 h-3.5 mr-1"/>Edit
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => deleteAssignment(a.id)} className="text-red-500 hover:text-red-700 hover:border-red-300">
+                            <Trash2 className="w-3.5 h-3.5"/>
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filteredAssignments.length === 0 && (
-                  <tr>
-                    <td colSpan="7" className="text-center py-12 text-gray-500">
-                      No assignments yet. Click <strong>Auto-Match All Libraries</strong> above.
-                    </td>
-                  </tr>
+                  <tr><td colSpan="8" className="text-center py-12 text-gray-500">
+                    No assignments match the current filters.
+                  </td></tr>
                 )}
               </tbody>
             </table>
@@ -680,72 +737,50 @@ const Settings = () => {
     </div>
   );
 
-  // ────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ────────────────────────────────────────────────────────────────────────
+  // ── Final render ──────────────────────────────────────────────────────────
   const TABS = [
-    { key: 'stages',      label: `Stages (${stages.length})`,      Icon: GraduationCap },
-    { key: 'sections',    label: `Sections (${sections.length})`,   Icon: Users },
-    { key: 'subjects',    label: `Subjects (${subjects.length})`,   Icon: BookOpen },
+    { key: 'stages',      label: `Stages (${stages.length})`,          Icon: GraduationCap },
+    { key: 'sections',    label: `Sections (${sections.length})`,       Icon: Users },
+    { key: 'subjects',    label: `Subjects (${subjects.length})`,       Icon: BookOpen },
     { key: 'assignments', label: `Assignments (${assignments.length})`, Icon: CheckCircle },
   ];
 
-  if (loading && stages.length === 0) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-gray-500 text-lg">Loading settings…</p>
-      </div>
-    );
-  }
+  if (loading && stages.length === 0) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <p className="text-gray-500 text-lg">Loading settings…</p>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 md:p-8">
-      {/* Edit modal */}
-      {editTarget && (
-        <EditModal
-          assignment={editTarget}
-          stages={stages}
-          sections={sections}
-          subjects={subjects}
-          onSave={saveEdit}
-          onClose={() => setEditTarget(null)}
-        />
-      )}
+      {editTarget       && <EditModal assignment={editTarget} stages={stages} sections={sections} subjects={subjects} onSave={saveEdit} onClose={() => setEditTarget(null)}/>}
+      {showBulkEdit     && <BulkEditModal count={selectedCount} onSave={applyBulkEdit} onClose={() => setShowBulkEdit(false)}/>}
+      {unmatchedResults && <UnmatchedModal results={unmatchedResults} onClose={() => { setUnmatchedResults(null); flash(`Auto-match complete. ${unmatchedResults.filter(r=>r.matched).length} matched, ${unmatchedResults.filter(r=>!r.matched).length} unmatched.`); }}/>}
 
       <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-            <SettingsIcon className="w-8 h-8 text-blue-600"/>
-            Financial System Settings
+            <SettingsIcon className="w-8 h-8 text-blue-600"/>Financial System Settings
           </h1>
           <p className="text-gray-500 mt-1">Configure stages, sections, subjects, and teacher assignments</p>
         </div>
 
-        {/* Flash message */}
         {msg.text && (
           <Alert className={msg.type === 'error' ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-300'}>
-            <AlertDescription className={msg.type === 'error' ? 'text-red-800' : 'text-green-800'}>
-              {msg.text}
-            </AlertDescription>
+            <AlertDescription className={msg.type === 'error' ? 'text-red-800' : 'text-green-800'}>{msg.text}</AlertDescription>
           </Alert>
         )}
 
-        {/* Tabs */}
         <div className="flex gap-1 border-b overflow-x-auto">
           {TABS.map(({ key, label, Icon }) => (
             <button key={key} onClick={() => setActiveTab(key)}
               className={`flex items-center gap-2 px-5 py-3 text-sm font-medium whitespace-nowrap transition-colors
-                ${activeTab === key
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-800'}`}>
-              <Icon className="w-4 h-4"/>
-              {label}
+                ${activeTab === key ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
+              <Icon className="w-4 h-4"/>{label}
             </button>
           ))}
         </div>
 
-        {/* Content */}
         {activeTab === 'stages'      && tabStagesJSX}
         {activeTab === 'sections'    && tabSectionsJSX}
         {activeTab === 'subjects'    && tabSubjectsJSX}
