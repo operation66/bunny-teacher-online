@@ -293,6 +293,28 @@ const Settings = () => {
     catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
 
+  const deleteAllAssignments = async () => {
+    const scope = filterStage
+      ? `all ${filteredAssignments.length} assignments for this stage`
+      : `ALL ${assignments.length} assignments`;
+    if (!window.confirm(`Are you sure you want to delete ${scope}? This cannot be undone.`)) return;
+    setLoading(true);
+    let failed = 0;
+    try {
+      await Promise.all(
+        filteredAssignments.map(a =>
+          financialApi.deleteTeacherAssignment(a.id).catch(() => { failed++; })
+        )
+      );
+      const deleted = filteredAssignments.length - failed;
+      flash(`Deleted ${deleted} assignment${deleted !== 1 ? 's' : ''}${failed ? ` (${failed} failed)` : ''}`);
+      loadAll();
+    } catch (err) {
+      flash('Error during delete all: ' + errMsg(err), 'error');
+      setLoading(false);
+    }
+  };
+
   // ── DERIVED ─────────────────────────────────────────────────────────────
   const filteredAssignments = filterStage
     ? assignments.filter(a => a.stage_id === Number(filterStage))
@@ -564,20 +586,33 @@ const Settings = () => {
         </CardContent>
       </Card>
 
-      {/* Filter */}
+      {/* Filter + Delete All */}
       <Card>
         <CardContent className="pt-4 pb-3">
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Filter by Stage:</label>
-            <select className="h-9 px-3 border rounded-lg text-sm min-w-[200px]"
-              value={filterStage} onChange={e => setFilterStage(e.target.value)}>
-              <option value="">All Stages ({assignments.length})</option>
-              {stages.map(s => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({assignments.filter(a => a.stage_id === s.id).length})
-                </option>
-              ))}
-            </select>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-700 whitespace-nowrap">Filter by Stage:</label>
+              <select className="h-9 px-3 border rounded-lg text-sm min-w-[200px]"
+                value={filterStage} onChange={e => setFilterStage(e.target.value)}>
+                <option value="">All Stages ({assignments.length})</option>
+                {stages.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({assignments.filter(a => a.stage_id === s.id).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {filteredAssignments.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={deleteAllAssignments}
+                disabled={loading}
+                className="text-red-600 border-red-300 hover:bg-red-50 hover:border-red-500"
+              >
+                <Trash2 className="w-4 h-4 mr-2"/>
+                Delete {filterStage ? 'Stage' : 'All'} ({filteredAssignments.length})
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
