@@ -333,9 +333,9 @@ const Settings = () => {
   };
 
   // ────────────────────────────────────────────────────────────────────────
-  // TAB: STAGES
+  // TAB JSX (inline — NOT inner components, to prevent focus loss on re-render)
   // ────────────────────────────────────────────────────────────────────────
-  const TabStages = () => (
+  const tabStagesJSX = (
     <div className="space-y-6">
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="w-5 h-5"/>Add New Stage</CardTitle></CardHeader>
@@ -396,9 +396,7 @@ const Settings = () => {
   );
 
   // ────────────────────────────────────────────────────────────────────────
-  // TAB: SECTIONS
-  // ────────────────────────────────────────────────────────────────────────
-  const TabSections = () => (
+  const tabSectionsJSX = (
     <div className="space-y-6">
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="w-5 h-5"/>Add New Section</CardTitle></CardHeader>
@@ -477,9 +475,7 @@ const Settings = () => {
   );
 
   // ────────────────────────────────────────────────────────────────────────
-  // TAB: SUBJECTS
-  // ────────────────────────────────────────────────────────────────────────
-  const TabSubjects = () => (
+  const tabSubjectsJSX = (
     <div className="space-y-6">
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="w-5 h-5"/>Add New Subject</CardTitle></CardHeader>
@@ -554,9 +550,7 @@ const Settings = () => {
   );
 
   // ────────────────────────────────────────────────────────────────────────
-  // TAB: ASSIGNMENTS
-  // ────────────────────────────────────────────────────────────────────────
-  const TabAssignments = () => (
+  const tabAssignmentsJSX = (
     <div className="space-y-6">
       {/* Info + auto-match button */}
       <Card>
@@ -752,10 +746,10 @@ const Settings = () => {
         </div>
 
         {/* Content */}
-        {activeTab === 'stages'      && <TabStages/>}
-        {activeTab === 'sections'    && <TabSections/>}
-        {activeTab === 'subjects'    && <TabSubjects/>}
-        {activeTab === 'assignments' && <TabAssignments/>}
+        {activeTab === 'stages'      && tabStagesJSX}
+        {activeTab === 'sections'    && tabSectionsJSX}
+        {activeTab === 'subjects'    && tabSubjectsJSX}
+        {activeTab === 'assignments' && tabAssignmentsJSX}
       </div>
     </div>
   );
