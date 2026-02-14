@@ -156,49 +156,308 @@ const BulkEditModal = ({ count, onSave, onClose }) => {
   );
 };
 
-// ── UnmatchedModal ────────────────────────────────────────────────────────────
-const UnmatchedModal = ({ results, onClose }) => {
+// ── ENHANCED UnmatchedModal ───────────────────────────────────────────────────
+const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveManual, onDeleteLibrary }) => {
+  const [editingItems, setEditingItems] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(new Set());
+  
   const unmatched = results.filter(r => !r.matched);
   const matched   = results.filter(r =>  r.matched).length;
+
+  // Initialize editing state for each unmatched library
+  useEffect(() => {
+    const initial = {};
+    unmatched.forEach(r => {
+      // Find closest matches
+      const stageMatch = stages.find(s => s.code === r.stage_code);
+      const subjectMatch = subjects.find(s => s.code === r.subject_code);
+      
+      initial[r.library_id] = {
+        library_id: r.library_id,
+        library_name: r.library_name,
+        stage_id: stageMatch?.id || '',
+        section_id: '',
+        subject_id: subjectMatch?.id || '',
+        stage_code: r.stage_code,
+        section_code: r.section_code,
+        subject_code: r.subject_code,
+      };
+      
+      // Auto-select section if we have a match
+      if (stageMatch && r.section_code) {
+        const sectionMatch = sections.find(s => 
+          s.stage_id === stageMatch.id && 
+          (s.code === r.section_code || s.code.toUpperCase() === r.section_code)
+        );
+        if (sectionMatch) {
+          initial[r.library_id].section_id = sectionMatch.id;
+        }
+      }
+    });
+    setEditingItems(initial);
+  }, [unmatched, stages, sections, subjects]);
+
+  const updateItem = (libId, field, value) => {
+    setEditingItems(prev => ({
+      ...prev,
+      [libId]: { ...prev[libId], [field]: value }
+    }));
+  };
+
+  const handleSaveOne = async (libId) => {
+    const item = editingItems[libId];
+    if (!item.stage_id || !item.subject_id) {
+      alert('Stage and Subject are required');
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      await onSaveManual({
+        library_id: Number(item.library_id),
+        library_name: item.library_name,
+        stage_id: Number(item.stage_id),
+        section_id: item.section_id ? Number(item.section_id) : null,
+        subject_id: Number(item.subject_id),
+        tax_rate: 0.0,
+        revenue_percentage: 0.95,
+      });
+      
+      // Remove from editing list
+      setEditingItems(prev => {
+        const next = { ...prev };
+        delete next[libId];
+        return next;
+      });
+    } catch (err) {
+      alert('Failed to save: ' + (err?.response?.data?.detail || err?.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteOne = async (libId) => {
+    if (!window.confirm('Remove this library from the list? You can always re-run auto-match later.')) return;
+    
+    setDeleting(prev => new Set(prev).add(libId));
+    try {
+      if (onDeleteLibrary) {
+        await onDeleteLibrary(libId);
+      }
+      // Remove from editing list
+      setEditingItems(prev => {
+        const next = { ...prev };
+        delete next[libId];
+        return next;
+      });
+    } catch (err) {
+      alert('Failed to remove: ' + (err?.response?.data?.detail || err?.message));
+    } finally {
+      setDeleting(prev => {
+        const next = new Set(prev);
+        next.delete(libId);
+        return next;
+      });
+    }
+  };
+
+  const remainingItems = Object.values(editingItems);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col">
+        
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
               <AlertTriangle className="w-5 h-5 text-orange-600"/>
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Auto-Match Results</h2>
+              <h2 className="text-lg font-bold text-gray-900">Manual Assignment Editor</h2>
               <p className="text-sm text-gray-500">
-                <span className="text-green-600 font-semibold">{matched} matched</span>
+                <span className="text-green-600 font-semibold">{matched} auto-matched</span>
                 {' · '}
-                <span className="text-orange-600 font-semibold">{unmatched.length} unmatched</span>
+                <span className="text-orange-600 font-semibold">{remainingItems.length} need review</span>
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5"/></button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="w-5 h-5"/>
+          </button>
         </div>
-        <div className="overflow-y-auto flex-1 px-6 py-4">
-          <p className="text-sm text-gray-600 mb-4">
-            These libraries could not be matched. Common fix: add the missing stage, section, or subject in the tabs above, then run Auto-Match again.
+
+        {/* Instructions */}
+        <div className="px-6 py-3 bg-blue-50 border-b border-blue-100 flex-shrink-0">
+          <p className="text-sm text-blue-800">
+            <strong>Review unmatched libraries below.</strong> Edit the dropdowns to assign the correct Stage/Section/Subject, then click <strong>Save</strong>. Or <strong>Remove</strong> libraries you don't need.
           </p>
-          <div className="space-y-2">
-            {unmatched.map((r, i) => (
-              <div key={i} className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                <p className="font-medium text-sm text-gray-800">{r.library_name}</p>
-                <p className="text-xs text-orange-700 mt-0.5">{r.message}</p>
-                <div className="flex gap-2 mt-1.5 flex-wrap">
-                  {r.stage_code   && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Stage: {r.stage_code}</span>}
-                  {r.section_code && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Section: {r.section_code}</span>}
-                  {r.subject_code && <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Subject: {r.subject_code}</span>}
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
+
+        {/* Scrollable list */}
+        <div className="overflow-y-auto flex-1 px-6 py-4">
+          {remainingItems.length === 0 ? (
+            <div className="text-center py-12">
+              <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-3"/>
+              <p className="text-lg font-semibold text-gray-700">All libraries processed!</p>
+              <p className="text-sm text-gray-500">Close this dialog to see your assignments.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {remainingItems.map(item => {
+                const stageObj = stages.find(s => s.id === Number(item.stage_id));
+                const availableSections = stageObj ? sections.filter(s => s.stage_id === stageObj.id) : [];
+                const subjectObj = subjects.find(s => s.id === Number(item.subject_id));
+                const isDeleting = deleting.has(item.library_id);
+
+                return (
+                  <div key={item.library_id} 
+                    className={`border-2 rounded-lg p-4 transition-all ${
+                      isDeleting ? 'border-red-300 bg-red-50 opacity-50' : 'border-orange-200 bg-orange-50'
+                    }`}>
+                    
+                    {/* Library name + parsed codes */}
+                    <div className="mb-3">
+                      <p className="font-semibold text-gray-800 mb-1">{item.library_name}</p>
+                      <div className="flex gap-2 flex-wrap">
+                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: {item.library_id}</span>
+                        {item.stage_code && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
+                            Parsed Stage: {item.stage_code}
+                          </span>
+                        )}
+                        {item.section_code && (
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-mono">
+                            Parsed Section: {item.section_code}
+                          </span>
+                        )}
+                        {item.subject_code && (
+                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-mono">
+                            Parsed Subject: {item.subject_code}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Editable dropdowns */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                      
+                      {/* Stage */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Stage *
+                        </label>
+                        <select 
+                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={item.stage_id}
+                          onChange={e => updateItem(item.library_id, 'stage_id', e.target.value)}
+                          disabled={isDeleting}>
+                          <option value="">Select stage...</option>
+                          {stages.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ({s.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Section */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Section <span className="text-gray-400 font-normal">(empty = common)</span>
+                        </label>
+                        <select 
+                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={item.section_id}
+                          onChange={e => updateItem(item.library_id, 'section_id', e.target.value)}
+                          disabled={!item.stage_id || isDeleting}>
+                          <option value="">None (Common Subject)</option>
+                          {availableSections.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ({s.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Subject */}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Subject *
+                        </label>
+                        <select 
+                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={item.subject_id}
+                          onChange={e => updateItem(item.library_id, 'subject_id', e.target.value)}
+                          disabled={isDeleting}>
+                          <option value="">Select subject...</option>
+                          {subjects.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} ({s.code}){s.is_common ? ' — Common' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm"
+                        onClick={() => handleSaveOne(item.library_id)}
+                        disabled={saving || !item.stage_id || !item.subject_id || isDeleting}
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white">
+                        <Save className="w-3.5 h-3.5 mr-1.5"/>
+                        {saving ? 'Saving...' : 'Save Assignment'}
+                      </Button>
+                      
+                      <Button 
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleDeleteOne(item.library_id)}
+                        disabled={saving || isDeleting}
+                        className="text-red-600 border-red-300 hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5 mr-1.5"/>
+                        {isDeleting ? 'Removing...' : 'Remove'}
+                      </Button>
+                    </div>
+
+                    {/* Validation hint */}
+                    {(!item.stage_id || !item.subject_id) && (
+                      <p className="text-xs text-orange-600 mt-2 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3"/>
+                        Stage and Subject are required to save
+                      </p>
+                    )}
+                    
+                    {/* Subject compatibility hint */}
+                    {item.subject_id && subjectObj && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        {subjectObj.is_common 
+                          ? '✓ Common subject — leave Section empty to apply to all sections'
+                          : '✓ Section-specific subject — select GEN or LANG section'}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
         <div className="px-6 py-4 border-t bg-gray-50 rounded-b-2xl flex-shrink-0">
-          <Button onClick={onClose} className="w-full bg-gray-800 hover:bg-gray-900 text-white">OK, close</Button>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-gray-600">
+              {remainingItems.length === 0 
+                ? 'All done! 🎉' 
+                : `${remainingItems.length} ${remainingItems.length === 1 ? 'library' : 'libraries'} remaining`}
+            </p>
+            <Button onClick={onClose} className="bg-gray-800 hover:bg-gray-900 text-white">
+              {remainingItems.length === 0 ? 'Close' : 'Close & Review Later'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -320,6 +579,24 @@ const Settings = () => {
     catch (err) { flash('Error: ' + errMsg(err), 'error'); }
   };
 
+  // Manual assignment save from unmatched modal
+  const saveManualAssignment = async (assignment) => {
+    try {
+      await financialApi.createTeacherAssignment(assignment);
+      flash('Assignment created successfully!');
+      await loadAll();
+    } catch (err) {
+      flash('Error creating assignment: ' + errMsg(err), 'error');
+      throw err;
+    }
+  };
+
+  // Delete library from unmatched modal (just removes from UI - no backend action needed)
+  const deleteLibraryFromUnmatched = async (libId) => {
+    // Just a UI operation - library is simply not processed
+    flash(`Library ${libId} removed from unmatched list`);
+  };
+
   // ── Filtering ─────────────────────────────────────────────────────────────
   const filteredAssignments = assignments.filter(a => {
     if (filterStage   && a.stage_id   !== Number(filterStage))       return false;
@@ -402,15 +679,22 @@ const Settings = () => {
     loadAll();
   };
 
-  // ── Section cell: code bold + name underlined below ───────────────────────
+  // ── UPDATED Section cell: shows "All Sections" for common subjects (section_id = NULL) ──
   const sectionCell = (a) => {
     if (!a.section_id) {
-      return <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-mono">—</span>;
+      // Common subject - applies to ALL sections
+      return (
+        <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-700 font-semibold">
+          All Sections
+        </span>
+      );
     }
-    const secObj  = sections.find(s => s.id === a.section_id);
-    const code    = secObj ? secObj.code : (a.section_name || '?');
-    const name    = secObj ? secObj.name : '';
-    const isGen   = code.toUpperCase().includes('GEN');
+    
+    const secObj = sections.find(s => s.id === a.section_id);
+    const code = secObj ? secObj.code : (a.section_name || '?');
+    const name = secObj ? secObj.name : '';
+    const isGen = code.toUpperCase().includes('GEN');
+    
     return (
       <div>
         <span className={`text-xs px-2 py-0.5 rounded font-mono font-bold
@@ -557,8 +841,8 @@ const Settings = () => {
               </div>
             </div>
             <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-              <strong>Common subjects</strong> (AR, EN, HX, S.S) appear in all sections — auto-match creates one row per section.<br/>
-              <strong>Section subjects</strong> (ISC, BIO, CHEM, PHYS, MATH…) are specific to GEN or LANG.
+              <strong>Common subjects</strong> (AR, EN, HX, S.S) appear in all sections — leave section empty when creating assignments.<br/>
+              <strong>Section subjects</strong> (ISC, BIO, CH, PHYS, MATH, PURE-MATH, APPLIED-MATH…) are specific to GEN or LANG.
             </div>
             <Button type="submit" className="bg-purple-600 hover:bg-purple-700"><Plus className="w-4 h-4 mr-2"/>Create Subject</Button>
           </form>
@@ -753,9 +1037,22 @@ const Settings = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 md:p-8">
-      {editTarget       && <EditModal assignment={editTarget} stages={stages} sections={sections} subjects={subjects} onSave={saveEdit} onClose={() => setEditTarget(null)}/>}
-      {showBulkEdit     && <BulkEditModal count={selectedCount} onSave={applyBulkEdit} onClose={() => setShowBulkEdit(false)}/>}
-      {unmatchedResults && <UnmatchedModal results={unmatchedResults} onClose={() => { setUnmatchedResults(null); flash(`Auto-match complete. ${unmatchedResults.filter(r=>r.matched).length} matched, ${unmatchedResults.filter(r=>!r.matched).length} unmatched.`); }}/>}
+      {editTarget && <EditModal assignment={editTarget} stages={stages} sections={sections} subjects={subjects} onSave={saveEdit} onClose={() => setEditTarget(null)}/>}
+      {showBulkEdit && <BulkEditModal count={selectedCount} onSave={applyBulkEdit} onClose={() => setShowBulkEdit(false)}/>}
+      {unmatchedResults && (
+        <UnmatchedModal 
+          results={unmatchedResults}
+          stages={stages}
+          sections={sections}
+          subjects={subjects}
+          onClose={() => { 
+            setUnmatchedResults(null); 
+            flash(`Auto-match complete. ${unmatchedResults.filter(r=>r.matched).length} matched, ${unmatchedResults.filter(r=>!r.matched).length} unmatched.`); 
+          }}
+          onSaveManual={saveManualAssignment}
+          onDeleteLibrary={deleteLibraryFromUnmatched}
+        />
+      )}
 
       <div className="max-w-7xl mx-auto space-y-6">
         <div>
