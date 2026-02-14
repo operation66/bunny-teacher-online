@@ -1242,17 +1242,24 @@ def create_teacher_assignment(assignment: TeacherAssignmentCreate, db: Session =
 
 
 @app.put("/teacher-assignments/{assignment_id}", response_model=TeacherAssignmentSchema)
-def update_teacher_assignment(assignment_id: int, assignment: TeacherAssignmentUpdate, db: Session = Depends(get_db)):
-    db_assignment = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
-    if not db_assignment:
+def update_teacher_assignment(
+    assignment_id: int,
+    assignment: TeacherAssignmentUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update a teacher assignment.  All fields are optional so callers can
+    patch only what changed (tax_rate, revenue_percentage, section_id, etc.)."""
+    db_obj = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
+    if not db_obj:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    for field, value in assignment.dict(exclude_unset=True).items():
-        setattr(db_assignment, field, value)
-    db_assignment.updated_at = datetime.now(pytz.UTC)
-    db.commit()
-    db.refresh(db_assignment)
-    return db_assignment
 
+    for field, value in assignment.dict(exclude_unset=True).items():
+        setattr(db_obj, field, value)
+
+    db_obj.updated_at = datetime.now(pytz.UTC)
+    db.commit()
+    db.refresh(db_obj)
+    return db_obj
 
 @app.delete("/teacher-assignments/{assignment_id}")
 def delete_teacher_assignment(assignment_id: int, db: Session = Depends(get_db)):
@@ -1266,78 +1273,189 @@ def delete_teacher_assignment(assignment_id: int, db: Session = Depends(get_db))
 
 @app.post("/teacher-assignments/auto-match", response_model=AutoMatchResponse)
 async def auto_match_teachers(db: Session = Depends(get_db)):
+    """
+    Auto-match all Bunny libraries to stage / section / subject.
+
+    Rules:
+    - Common subjects (AR, EN, HX, SS …) → one assignment per section
+      (GEN + LANG) for that stage so the teacher appears in both rows.
+    - Section-specific subjects (ISC, BIO, CH, MATH …) → one assignment
+      in the matched section (GEN or LANG).
+    - Default revenue_percentage = 0.95  (95 %)
+    - Default tax_rate            = 0.0  (0 %)
+    - Existing assignments are NOT duplicated (idempotent).
+    """
     try:
         libraries = await get_bunny_libraries()
-        stages = {s.code: s for s in db.query(Stage).all()}
-        subjects = {s.code: s for s in db.query(Subject).all()}
-        sections = {(sec.stage_id, sec.code): sec for sec in db.query(Section).all()}
-        results = []
+
+        # Build lookup dicts for fast access
+        stages_by_code   = {s.code: s for s in db.query(Stage).all()}
+        subjects_by_code = {s.code: s for s in db.query(Subject).all()}
+        # (stage_id, section_code) → Section object
+        sections_lookup  = {
+            (sec.stage_id, sec.code): sec
+            for sec in db.query(Section).all()
+        }
+        # All sections grouped by stage_id
+        sections_by_stage = {}
+        for (sid, _), sec in sections_lookup.items():
+            sections_by_stage.setdefault(sid, []).append(sec)
+
+        results       = []
         matched_count = 0
+        unmatched_count = 0
 
         for lib in libraries:
-            lib_id = lib.get("id")
-            lib_name = lib.get("name")
+            lib_id   = lib.get("id")
+            lib_name = lib.get("name", "")
+
+            if not lib_id:
+                unmatched_count += 1
+                continue
+
             stage_code, section_code, subject_code = parse_library_name(lib_name)
 
+            # ── Cannot parse ──────────────────────────────────────────────────
             if not stage_code or not subject_code:
-                results.append(AutoMatchResult(library_id=lib_id, library_name=lib_name,
-                    stage_code=stage_code, section_code=section_code, subject_code=subject_code,
-                    matched=False, message="Could not parse library name"))
+                results.append(AutoMatchResult(
+                    library_id=lib_id, library_name=lib_name,
+                    stage_code=stage_code, section_code=section_code,
+                    subject_code=subject_code, matched=False,
+                    message=f"Could not parse: stage={stage_code}, subject={subject_code}"
+                ))
+                unmatched_count += 1
                 continue
 
-            stage = stages.get(stage_code)
+            # ── Stage not in DB ───────────────────────────────────────────────
+            stage = stages_by_code.get(stage_code)
             if not stage:
-                results.append(AutoMatchResult(library_id=lib_id, library_name=lib_name,
-                    stage_code=stage_code, section_code=section_code, subject_code=subject_code,
-                    matched=False, message=f"Stage {stage_code} not found"))
+                results.append(AutoMatchResult(
+                    library_id=lib_id, library_name=lib_name,
+                    stage_code=stage_code, section_code=section_code,
+                    subject_code=subject_code, matched=False,
+                    message=f"Stage '{stage_code}' not found – add it in Settings → Stages"
+                ))
+                unmatched_count += 1
                 continue
 
-            subject = subjects.get(subject_code)
+            # ── Subject not in DB (case-insensitive fallback) ─────────────────
+            subject = subjects_by_code.get(subject_code)
             if not subject:
-                results.append(AutoMatchResult(library_id=lib_id, library_name=lib_name,
-                    stage_code=stage_code, section_code=section_code, subject_code=subject_code,
-                    matched=False, message=f"Subject {subject_code} not found"))
+                for code, subj in subjects_by_code.items():
+                    if code.upper() == subject_code.upper():
+                        subject = subj
+                        break
+            if not subject:
+                results.append(AutoMatchResult(
+                    library_id=lib_id, library_name=lib_name,
+                    stage_code=stage_code, section_code=section_code,
+                    subject_code=subject_code, matched=False,
+                    message=f"Subject '{subject_code}' not found – add it in Settings → Subjects"
+                ))
+                unmatched_count += 1
                 continue
 
-            section = None
-            if section_code and not subject.is_common:
-                section = sections.get((stage.id, section_code))
+            # ── COMMON SUBJECT → assign to EVERY section in this stage ────────
+            if subject.is_common or section_code is None:
+                stage_sections = sections_by_stage.get(stage.id, [])
+
+                if not stage_sections:
+                    # No sections defined yet → one assignment with section_id=None
+                    existing = db.query(TeacherAssignment).filter(
+                        TeacherAssignment.library_id == lib_id,
+                        TeacherAssignment.stage_id   == stage.id,
+                        TeacherAssignment.subject_id  == subject.id,
+                        TeacherAssignment.section_id  == None,
+                    ).first()
+                    if not existing:
+                        db.add(TeacherAssignment(
+                            library_id=lib_id, library_name=lib_name,
+                            stage_id=stage.id, section_id=None,
+                            subject_id=subject.id,
+                            tax_rate=0.0, revenue_percentage=0.95,
+                        ))
+                    results.append(AutoMatchResult(
+                        library_id=lib_id, library_name=lib_name,
+                        stage_code=stage_code, section_code="NONE_YET",
+                        subject_code=subject_code, matched=True,
+                        message="Common – no sections defined for this stage yet"
+                    ))
+                else:
+                    assigned_to = []
+                    for sec in stage_sections:
+                        existing = db.query(TeacherAssignment).filter(
+                            TeacherAssignment.library_id == lib_id,
+                            TeacherAssignment.stage_id   == stage.id,
+                            TeacherAssignment.subject_id  == subject.id,
+                            TeacherAssignment.section_id  == sec.id,
+                        ).first()
+                        if not existing:
+                            db.add(TeacherAssignment(
+                                library_id=lib_id, library_name=lib_name,
+                                stage_id=stage.id, section_id=sec.id,
+                                subject_id=subject.id,
+                                tax_rate=0.0, revenue_percentage=0.95,
+                            ))
+                        assigned_to.append(sec.code)
+                    results.append(AutoMatchResult(
+                        library_id=lib_id, library_name=lib_name,
+                        stage_code=stage_code, section_code="BOTH",
+                        subject_code=subject_code, matched=True,
+                        message=f"Common subject → assigned to: {', '.join(assigned_to)}"
+                    ))
+                matched_count += 1
+
+            # ── SECTION-SPECIFIC SUBJECT → one assignment ─────────────────────
+            else:
+                section = sections_lookup.get((stage.id, section_code))
                 if not section:
-                    results.append(AutoMatchResult(library_id=lib_id, library_name=lib_name,
-                        stage_code=stage_code, section_code=section_code, subject_code=subject_code,
-                        matched=False, message=f"Section {section_code} not found for stage {stage_code}"))
+                    results.append(AutoMatchResult(
+                        library_id=lib_id, library_name=lib_name,
+                        stage_code=stage_code, section_code=section_code,
+                        subject_code=subject_code, matched=False,
+                        message=(
+                            f"Section '{section_code}' not found for stage '{stage_code}' – "
+                            f"add it in Settings → Sections"
+                        )
+                    ))
+                    unmatched_count += 1
                     continue
 
-            existing = db.query(TeacherAssignment).filter(
-                TeacherAssignment.library_id == lib_id,
-                TeacherAssignment.stage_id == stage.id,
-                TeacherAssignment.subject_id == subject.id
-            ).first()
-
-            if existing:
-                results.append(AutoMatchResult(library_id=lib_id, library_name=lib_name,
-                    stage_code=stage_code, section_code=section_code, subject_code=subject_code,
-                    matched=True, message="Already assigned"))
+                existing = db.query(TeacherAssignment).filter(
+                    TeacherAssignment.library_id == lib_id,
+                    TeacherAssignment.stage_id   == stage.id,
+                    TeacherAssignment.subject_id  == subject.id,
+                    TeacherAssignment.section_id  == section.id,
+                ).first()
+                if not existing:
+                    db.add(TeacherAssignment(
+                        library_id=lib_id, library_name=lib_name,
+                        stage_id=stage.id, section_id=section.id,
+                        subject_id=subject.id,
+                        tax_rate=0.0, revenue_percentage=0.95,
+                    ))
+                results.append(AutoMatchResult(
+                    library_id=lib_id, library_name=lib_name,
+                    stage_code=stage_code, section_code=section_code,
+                    subject_code=subject_code, matched=True,
+                    message=f"Matched to section {section_code} ({section.name})"
+                ))
                 matched_count += 1
-                continue
-
-            db.add(TeacherAssignment(
-                library_id=lib_id, library_name=lib_name,
-                stage_id=stage.id, section_id=section.id if section else None,
-                subject_id=subject.id, tax_rate=0.0, revenue_percentage=1.0
-            ))
-            results.append(AutoMatchResult(library_id=lib_id, library_name=lib_name,
-                stage_code=stage_code, section_code=section_code, subject_code=subject_code,
-                matched=True, message="Successfully matched"))
-            matched_count += 1
 
         db.commit()
-        return AutoMatchResponse(total_libraries=len(libraries), matched=matched_count,
-                                 unmatched=len(libraries) - matched_count, results=results)
+        logger.info(f"Auto-match: {matched_count} matched, {unmatched_count} unmatched from {len(libraries)} libraries")
+
+        return AutoMatchResponse(
+            total_libraries=len(libraries),
+            matched=matched_count,
+            unmatched=unmatched_count,
+            results=results,
+        )
 
     except Exception as e:
         db.rollback()
-        logger.error(f"Auto-match error: {str(e)}")
+        logger.error(f"Auto-match error: {e}")
+        import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 
