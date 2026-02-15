@@ -1233,13 +1233,46 @@ def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db))
 
 
 @app.post("/teacher-assignments/", response_model=TeacherAssignmentSchema)
-def create_teacher_assignment(assignment: TeacherAssignmentCreate, db: Session = Depends(get_db)):
-    db_assignment = TeacherAssignment(**assignment.dict())
-    db.add(db_assignment)
-    db.commit()
-    db.refresh(db_assignment)
-    return db_assignment
+def create_teacher_assignment(
+    assignment: TeacherAssignmentCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Create a teacher assignment.
+    Uses UPSERT logic: if an identical assignment already exists
+    (same library_id + stage_id + section_id + subject_id), return the
+    existing record instead of raising a duplicate-key error.
+    """
+    try:
+        # Check for exact duplicate first
+        existing = db.query(TeacherAssignment).filter(
+            TeacherAssignment.library_id == assignment.library_id,
+            TeacherAssignment.stage_id   == assignment.stage_id,
+            TeacherAssignment.subject_id  == assignment.subject_id,
+            TeacherAssignment.section_id  == assignment.section_id,   # handles None == None
+        ).first()
 
+        if existing:
+            # Update tax/revenue if they differ from defaults, then return
+            if assignment.tax_rate != 0.0 or assignment.revenue_percentage != 0.95:
+                existing.tax_rate           = assignment.tax_rate
+                existing.revenue_percentage = assignment.revenue_percentage
+                existing.updated_at         = datetime.now(pytz.UTC)
+                db.commit()
+                db.refresh(existing)
+            return existing
+
+        # No duplicate — create fresh
+        db_assignment = TeacherAssignment(**assignment.dict())
+        db.add(db_assignment)
+        db.commit()
+        db.refresh(db_assignment)
+        return db_assignment
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating teacher assignment: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create assignment: {str(e)}")
 
 @app.put("/teacher-assignments/{assignment_id}", response_model=TeacherAssignmentSchema)
 def update_teacher_assignment(
