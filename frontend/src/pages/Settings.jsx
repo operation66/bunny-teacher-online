@@ -278,9 +278,11 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
     setSaving(prev => new Set(prev).add(libId));
     try {
       const subjectObj = subjects.find(s => s.id === Number(item.subject_id));
+      const payloads = [];
+
       if (item.section_ids.length === 0 || (subjectObj && subjectObj.is_common)) {
         // Common subject or no section selected → save once with section_id=null
-        await onSaveManual({
+        payloads.push({
           library_id: Number(item.library_id),
           library_name: item.library_name,
           stage_id: Number(item.stage_id),
@@ -292,7 +294,7 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
       } else {
         // Save one assignment per selected section
         for (const secId of item.section_ids) {
-          await onSaveManual({
+          payloads.push({
             library_id: Number(item.library_id),
             library_name: item.library_name,
             stage_id: Number(item.stage_id),
@@ -303,9 +305,32 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
           });
         }
       }
-      removeItem(libId);
+
+      // Save all payloads — backend uses upsert so duplicates are safe
+      const errors = [];
+      for (const payload of payloads) {
+        try {
+          await onSaveManual(payload);
+        } catch (err) {
+          const msg = err?.response?.data?.detail || err?.message || 'Unknown error';
+          // If already exists (409 or contains "already"), treat as success — assignment is there
+          if (err?.response?.status === 409 || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')) {
+            // Silently continue — assignment already exists, which is fine
+          } else {
+            errors.push(msg);
+          }
+        }
+      }
+
+      if (errors.length > 0) {
+        alert(`Some sections failed to save:\n${errors.join('\n')}\n\nCheck your connection and try again.`);
+      } else {
+        removeItem(libId);
+      }
     } catch (err) {
-      alert('Failed to save: ' + (err?.response?.data?.detail || err?.message || 'Unknown error'));
+      const detail = err?.response?.data?.detail || err?.response?.statusText || err?.message || 'Unknown error';
+      const status = err?.response?.status;
+      alert(`Failed to save (${status || 'Network Error'}): ${detail}`);
     } finally {
       setSaving(prev => { const n = new Set(prev); n.delete(libId); return n; });
     }
@@ -729,9 +754,17 @@ const Settings = () => {
   const saveManualAssignment = async (assignment) => {
     try {
       await financialApi.createTeacherAssignment(assignment);
-      flash('Assignment created!');
       await loadAll();
-    } catch (err) { flash('Error creating assignment: ' + errMsg(err), 'error'); throw err; }
+    } catch (err) {
+      const msg = err?.response?.data?.detail || err?.message || '';
+      // Treat "already exists" / duplicate as success — backend upsert may not be deployed yet
+      if (err?.response?.status === 409 || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')) {
+        await loadAll(); // reload to show the existing assignment
+        return;
+      }
+      flash('Error creating assignment: ' + msg, 'error');
+      throw err;
+    }
   };
 
   // When unmatched modal closes, save remaining items to pending state
