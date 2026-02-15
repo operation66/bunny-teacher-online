@@ -1231,28 +1231,58 @@ def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db))
         result.append(TeacherAssignmentWithDetails(**assignment_dict))
     return result
 
+# ============================================================
+# REPLACE the create_teacher_assignment function in main.py
+# with this complete version.
+#
+# ROOT CAUSE of 500 error:
+#   FastAPI response_model=TeacherAssignmentSchema validation fails
+#   when the function returns an SQLAlchemy ORM object directly.
+#   Other endpoints work because they build dicts manually first.
+#   The ORM object has _sa_instance_state which breaks serialization.
+#
+# FIX: serialize ORM object to dict before returning.
+# ============================================================
+
+def _assignment_to_dict(obj) -> dict:
+    """Convert a TeacherAssignment ORM object to a plain dict safe for FastAPI response."""
+    return {
+        "id":                 obj.id,
+        "library_id":         obj.library_id,
+        "library_name":       obj.library_name,
+        "stage_id":           obj.stage_id,
+        "section_id":         obj.section_id,
+        "subject_id":         obj.subject_id,
+        "tax_rate":           obj.tax_rate,
+        "revenue_percentage": obj.revenue_percentage,
+        "created_at":         obj.created_at,
+        "updated_at":         obj.updated_at,
+    }
+
+
 @app.post("/teacher-assignments/", response_model=TeacherAssignmentSchema)
 def create_teacher_assignment(
     assignment: TeacherAssignmentCreate,
     db: Session = Depends(get_db),
 ):
     """
-    Upsert a teacher assignment.
-    If an identical record exists (same library_id + stage_id + section_id + subject_id)
-    return it instead of creating a duplicate.
+    Upsert teacher assignment — returns existing record if duplicate,
+    otherwise creates a new one.
 
-    CRITICAL FIX: Use .is_(None) for NULL comparison — SQLAlchemy "col == None"
-    generates "col = NULL" which is always FALSE in SQL.
+    FIXES:
+    1. Uses .is_(None) for NULL section_id comparison (SQLAlchemy bug)
+    2. Returns plain dict so FastAPI response_model serialization never fails
     """
     try:
-        # Build the duplicate-check query with correct NULL handling
+        # Build duplicate-check query with correct NULL handling
         q = db.query(TeacherAssignment).filter(
             TeacherAssignment.library_id == assignment.library_id,
             TeacherAssignment.stage_id   == assignment.stage_id,
             TeacherAssignment.subject_id == assignment.subject_id,
         )
 
-        # section_id NULL comparison MUST use .is_(None) not == None
+        # CRITICAL: section_id NULL needs .is_(None) not == None
+        # SQL NULL = NULL is always FALSE; must use IS NULL
         if assignment.section_id is None:
             q = q.filter(TeacherAssignment.section_id.is_(None))
         else:
@@ -1261,26 +1291,28 @@ def create_teacher_assignment(
         existing = q.first()
 
         if existing:
-            # Already exists — optionally update tax/revenue then return
+            # Update only if values actually changed
             changed = False
-            if assignment.tax_rate is not None and assignment.tax_rate != existing.tax_rate:
+            if assignment.tax_rate != existing.tax_rate:
                 existing.tax_rate = assignment.tax_rate
                 changed = True
-            if assignment.revenue_percentage is not None and assignment.revenue_percentage != existing.revenue_percentage:
+            if assignment.revenue_percentage != existing.revenue_percentage:
                 existing.revenue_percentage = assignment.revenue_percentage
                 changed = True
             if changed:
                 existing.updated_at = datetime.now(pytz.UTC)
                 db.commit()
                 db.refresh(existing)
-            return existing
+            # Return as plain dict — avoids ORM serialization errors
+            return _assignment_to_dict(existing)
 
         # New record
         db_assignment = TeacherAssignment(**assignment.dict())
         db.add(db_assignment)
         db.commit()
         db.refresh(db_assignment)
-        return db_assignment
+        # Return as plain dict — avoids ORM serialization errors
+        return _assignment_to_dict(db_assignment)
 
     except Exception as e:
         db.rollback()
