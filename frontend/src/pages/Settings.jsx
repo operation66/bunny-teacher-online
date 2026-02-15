@@ -644,7 +644,6 @@ const Settings = () => {
   const [filterStage, setFilterStage] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterSubject, setFilterSubject] = useState('');
-  const [filterPending, setFilterPending] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [editTarget, setEditTarget] = useState(null);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
@@ -817,7 +816,8 @@ const Settings = () => {
   })();
 
   // Filter grouped assignments
-  const pendingLibIds = new Set(pendingLibs.map(p => p.library_id));
+  // Pending libs are opened in the manual editor via reopenPendingEditor()
+  // They don't appear in groupedAssignments (no DB rows yet), so no table filter needed
 
   const filteredGrouped = groupedAssignments.filter(a => {
     if (filterStage && a.stage_id !== Number(filterStage)) return false;
@@ -829,7 +829,6 @@ const Settings = () => {
       }
     }
     if (filterSubject && a.subject_id !== Number(filterSubject)) return false;
-    if (filterPending && !pendingLibIds.has(a.library_id)) return false;
     return true;
   });
 
@@ -902,7 +901,7 @@ const Settings = () => {
     loadAll();
   };
 
-  // Section column: multiple badges stacked
+  // Section column: compact code badges only — full name shown on hover via title
   const sectionCell = (group) => {
     const secList = group._sections;
     if (!secList.length) {
@@ -913,20 +912,19 @@ const Settings = () => {
         {secList.map((s, i) => {
           if (!s.id) {
             return (
-              <span key={i} className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-semibold block">
-                All Sections
+              <span key={i} title="Applies to all sections"
+                className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-semibold cursor-default">
+                All
               </span>
             );
           }
           const isGen = s.code.toUpperCase().includes('GEN');
           return (
-            <div key={i}>
-              <span className={`text-xs px-2 py-0.5 rounded font-mono font-bold
+            <span key={i} title={s.name}
+              className={`text-xs px-2 py-0.5 rounded font-mono font-bold cursor-default
                 ${isGen ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                {s.code}
-              </span>
-              <div className="text-xs text-gray-400 underline leading-tight mt-0.5">{s.name}</div>
-            </div>
+              {s.code}
+            </span>
           );
         })}
       </div>
@@ -1132,7 +1130,7 @@ const Settings = () => {
       {/* Filters */}
       <Card>
         <CardContent className="pt-4 pb-3">
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Stage</label>
               <select className="w-full h-9 px-3 border rounded-lg text-sm" value={filterStage} onChange={e => handleFilterStage(e.target.value)}>
@@ -1153,18 +1151,6 @@ const Settings = () => {
                 <option value="">All Subjects</option>
                 {subjectOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
               </select>
-            </div>
-            <div className="flex flex-col justify-end">
-              <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
-              <label className={`flex items-center gap-2 h-9 px-3 border rounded-lg cursor-pointer transition-colors
-                ${filterPending ? 'bg-orange-50 border-orange-400' : 'bg-white border-gray-300'}`}>
-                <input type="checkbox" checked={filterPending} onChange={e => { setFilterPending(e.target.checked); setSelectedIds(new Set()); }}
-                  className="w-3.5 h-3.5 rounded text-orange-500"/>
-                <span className="text-xs font-medium text-gray-700">Pending Review Only</span>
-                {pendingLibs.length > 0 && (
-                  <span className="ml-auto text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-semibold">{pendingLibs.length}</span>
-                )}
-              </label>
             </div>
           </div>
         </CardContent>
@@ -1208,58 +1194,52 @@ const Settings = () => {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b">
-                  <th className="px-4 py-3 w-10">
+                  <th className="px-4 py-3 w-8">
                     <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
                       className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
                   </th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Library</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Stage</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600 min-w-[160px]">Section(s)</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 w-72">Library</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 w-24">Stage</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600 w-36">Section</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Subject</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600">Tax %</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600">Revenue %</th>
-                  <th className="text-center px-4 py-3 font-medium text-gray-600">Actions</th>
+                  <th className="text-right px-4 py-3 font-medium text-gray-600 w-20">Tax %</th>
+                  <th className="text-right px-4 py-3 font-medium text-gray-600 w-24">Revenue %</th>
+                  <th className="text-center px-4 py-3 font-medium text-gray-600 w-28">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredGrouped.map(g => {
                   const key = groupKey(g);
                   const isSelected = selectedIds.has(key);
-                  const isPending = pendingLibIds.has(g.library_id);
                   return (
                     <tr key={key} onClick={() => toggleSelect(key)}
                       className={`border-b cursor-pointer transition-colors
-                        ${isSelected ? 'bg-blue-50 hover:bg-blue-100' : isPending ? 'bg-orange-50 hover:bg-orange-100' : 'hover:bg-gray-50'}`}>
+                        ${isSelected ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'}`}>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(key)}
                           className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-start gap-1.5">
-                          {isPending && <Clock className="w-3.5 h-3.5 text-orange-500 mt-0.5 flex-shrink-0" title="Pending review"/>}
-                          <div>
-                            <p className="font-medium text-gray-800 text-sm leading-tight">{g.library_name}</p>
-                            <p className="text-xs text-gray-400">ID: {g.library_id}</p>
-                          </div>
-                        </div>
+                      <td className="px-4 py-2">
+                        <p className="font-medium text-gray-800 text-sm leading-tight">{g.library_name}</p>
+                        <p className="text-xs text-gray-400">ID: {g.library_id}</p>
                       </td>
-                      <td className="px-4 py-3">
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">{g.stage_name}</span>
+                      <td className="px-4 py-2">
+                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono whitespace-nowrap">{g.stage_name}</span>
                       </td>
-                      <td className="px-4 py-3">{sectionCell(g)}</td>
-                      <td className="px-4 py-3">
-                        <span className="font-mono font-semibold text-gray-800">{g.subject_name}</span>
+                      <td className="px-4 py-2">{sectionCell(g)}</td>
+                      <td className="px-4 py-2">
+                        <span className="font-medium text-gray-800 text-sm">{g.subject_name}</span>
                         {g.subject_is_common && <span className="ml-1 text-xs text-purple-500">(common)</span>}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-gray-700">{pct(g.tax_rate)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-gray-700">{pct(g.revenue_percentage)}</td>
-                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-2">
-                          <Button size="sm" variant="outline" onClick={() => setEditTarget(g)} className="hover:bg-blue-50 hover:border-blue-300">
+                      <td className="px-4 py-2 text-right font-mono text-gray-700 text-sm whitespace-nowrap">{pct(g.tax_rate)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-gray-700 text-sm whitespace-nowrap">{pct(g.revenue_percentage)}</td>
+                      <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-center gap-1">
+                          <Button size="sm" variant="outline" onClick={() => setEditTarget(g)} className="hover:bg-blue-50 hover:border-blue-300 h-7 px-2">
                             <Edit2 className="w-3.5 h-3.5 mr-1"/>Edit
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => { g._rowIds.forEach(id => deleteAssignment(id)); }}
-                            className="text-red-500 hover:text-red-700 hover:border-red-300">
+                            className="text-red-500 hover:text-red-700 hover:border-red-300 h-7 px-2">
                             <Trash2 className="w-3.5 h-3.5"/>
                           </Button>
                         </div>
