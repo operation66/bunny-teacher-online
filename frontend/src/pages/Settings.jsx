@@ -157,102 +157,226 @@ const BulkEditModal = ({ count, onSave, onClose }) => {
 };
 
 // ── ENHANCED UnmatchedModal ───────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// COMPLETE FIXED UnmatchedModal - Replace in Settings.jsx
+// ══════════════════════════════════════════════════════════════════════════════
+
 const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveManual, onDeleteLibrary }) => {
   const [editingItems, setEditingItems] = useState({});
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(new Set());
   
   const unmatched = results.filter(r => !r.matched);
   const matched   = results.filter(r =>  r.matched).length;
 
-  // Initialize editing state for each unmatched library
+  // ✅ FIX 1: Initialize editing state with EXACT code matching
   useEffect(() => {
     const initial = {};
     unmatched.forEach(r => {
-      // Find closest matches
-      const stageMatch = stages.find(s => s.code === r.stage_code);
-      const subjectMatch = subjects.find(s => s.code === r.subject_code);
+      const parsedStageCode = (r.stage_code || '').toUpperCase().trim();
+      const parsedSectionCode = (r.section_code || '').toUpperCase().trim();
+      const parsedSubjectCode = (r.subject_code || '').toUpperCase().trim();
+
+      // Find exact matches
+      const stageMatch = stages.find(s => s.code.toUpperCase() === parsedStageCode);
+      const subjectMatch = subjects.find(s => s.code.toUpperCase() === parsedSubjectCode);
       
       initial[r.library_id] = {
         library_id: r.library_id,
         library_name: r.library_name,
-        stage_id: stageMatch?.id || '',
+        stage_id: stageMatch?.id?.toString() || '',
         section_id: '',
-        subject_id: subjectMatch?.id || '',
-        stage_code: r.stage_code,
-        section_code: r.section_code,
-        subject_code: r.subject_code,
+        subject_id: subjectMatch?.id?.toString() || '',
+        stage_code: parsedStageCode,
+        section_code: parsedSectionCode,
+        subject_code: parsedSubjectCode,
       };
       
-      // Auto-select section if we have a match
-      if (stageMatch && r.section_code) {
+      // Auto-select section if stage found and section code exists
+      if (stageMatch && parsedSectionCode) {
         const sectionMatch = sections.find(s => 
           s.stage_id === stageMatch.id && 
-          (s.code === r.section_code || s.code.toUpperCase() === r.section_code)
+          s.code.toUpperCase() === parsedSectionCode
         );
         if (sectionMatch) {
-          initial[r.library_id].section_id = sectionMatch.id;
+          initial[r.library_id].section_id = sectionMatch.id.toString();
         }
       }
     });
     setEditingItems(initial);
+    console.log('Initialized editing items:', initial); // Debug log
   }, [unmatched, stages, sections, subjects]);
 
+  // ✅ FIX 2: Proper state update function
   const updateItem = (libId, field, value) => {
-    setEditingItems(prev => ({
-      ...prev,
-      [libId]: { ...prev[libId], [field]: value }
-    }));
+    console.log(`Updating ${field} for library ${libId} to:`, value); // Debug log
+    setEditingItems(prev => {
+      const updated = {
+        ...prev,
+        [libId]: {
+          ...(prev[libId] || {}),
+          [field]: value
+        }
+      };
+      console.log('Updated editingItems:', updated); // Debug log
+      return updated;
+    });
+
+    // Reset section when stage changes
+    if (field === 'stage_id') {
+      setTimeout(() => {
+        setEditingItems(prev => ({
+          ...prev,
+          [libId]: {
+            ...(prev[libId] || {}),
+            section_id: ''
+          }
+        }));
+      }, 0);
+    }
   };
 
+  // ✅ FIX 3: Selection handlers
+  const toggleSelectOne = (libId) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(libId) ? next.delete(libId) : next.add(libId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    const allLibIds = Object.keys(editingItems).map(id => parseInt(id));
+    setSelectedIds(prev => {
+      if (prev.size === allLibIds.length) {
+        return new Set();
+      } else {
+        return new Set(allLibIds);
+      }
+    });
+  };
+
+  // ✅ FIX 4: Save single assignment
   const handleSaveOne = async (libId) => {
     const item = editingItems[libId];
-    if (!item.stage_id || !item.subject_id) {
-      alert('Stage and Subject are required');
+    if (!item) {
+      alert('Item not found');
+      return;
+    }
+    
+    if (!item.stage_id || item.stage_id === '') {
+      alert('Stage is required');
+      return;
+    }
+    
+    if (!item.subject_id || item.subject_id === '') {
+      alert('Subject is required');
       return;
     }
     
     setSaving(true);
     try {
       await onSaveManual({
-        library_id: Number(item.library_id),
+        library_id: parseInt(item.library_id),
         library_name: item.library_name,
-        stage_id: Number(item.stage_id),
-        section_id: item.section_id ? Number(item.section_id) : null,
-        subject_id: Number(item.subject_id),
+        stage_id: parseInt(item.stage_id),
+        section_id: item.section_id && item.section_id !== '' ? parseInt(item.section_id) : null,
+        subject_id: parseInt(item.subject_id),
         tax_rate: 0.0,
         revenue_percentage: 0.95,
       });
       
-      // Remove from editing list
+      // Remove from editing list on success
       setEditingItems(prev => {
         const next = { ...prev };
         delete next[libId];
         return next;
       });
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(libId);
+        return next;
+      });
     } catch (err) {
-      alert('Failed to save: ' + (err?.response?.data?.detail || err?.message));
+      alert('Failed to save: ' + (err?.response?.data?.detail || err?.message || 'Unknown error'));
     } finally {
       setSaving(false);
     }
   };
 
+  // ✅ FIX 5: Bulk save selected
+  const handleSaveSelected = async () => {
+    const selectedItems = Array.from(selectedIds)
+      .map(id => editingItems[id])
+      .filter(item => item && item.stage_id && item.stage_id !== '' && item.subject_id && item.subject_id !== '');
+    
+    if (selectedItems.length === 0) {
+      alert('No valid items selected (Stage and Subject required)');
+      return;
+    }
+
+    if (!window.confirm(`Save ${selectedItems.length} assignments?`)) return;
+
+    setSaving(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const item of selectedItems) {
+      try {
+        await onSaveManual({
+          library_id: parseInt(item.library_id),
+          library_name: item.library_name,
+          stage_id: parseInt(item.stage_id),
+          section_id: item.section_id && item.section_id !== '' ? parseInt(item.section_id) : null,
+          subject_id: parseInt(item.subject_id),
+          tax_rate: 0.0,
+          revenue_percentage: 0.95,
+        });
+        successCount++;
+        
+        // Remove from lists
+        setEditingItems(prev => {
+          const next = { ...prev };
+          delete next[item.library_id];
+          return next;
+        });
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          next.delete(item.library_id);
+          return next;
+        });
+      } catch (err) {
+        console.error(`Failed to save library ${item.library_id}:`, err);
+        failCount++;
+      }
+    }
+
+    setSaving(false);
+    alert(`Saved ${successCount} assignments${failCount > 0 ? `, ${failCount} failed` : ''}`);
+  };
+
+  // ✅ FIX 6: Delete single
   const handleDeleteOne = async (libId) => {
-    if (!window.confirm('Remove this library from the list? You can always re-run auto-match later.')) return;
+    if (!window.confirm('Remove this library from the list?')) return;
     
     setDeleting(prev => new Set(prev).add(libId));
     try {
       if (onDeleteLibrary) {
         await onDeleteLibrary(libId);
       }
-      // Remove from editing list
       setEditingItems(prev => {
         const next = { ...prev };
         delete next[libId];
         return next;
       });
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(libId);
+        return next;
+      });
     } catch (err) {
-      alert('Failed to remove: ' + (err?.response?.data?.detail || err?.message));
+      alert('Failed to remove');
     } finally {
       setDeleting(prev => {
         const next = new Set(prev);
@@ -262,11 +386,48 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
     }
   };
 
+  // ✅ FIX 7: Bulk delete
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) {
+      alert('No items selected');
+      return;
+    }
+
+    if (!window.confirm(`Remove ${selectedIds.size} libraries from the list?`)) return;
+
+    const idsToDelete = Array.from(selectedIds);
+    
+    for (const libId of idsToDelete) {
+      setDeleting(prev => new Set(prev).add(libId));
+      try {
+        if (onDeleteLibrary) {
+          await onDeleteLibrary(libId);
+        }
+        setEditingItems(prev => {
+          const next = { ...prev };
+          delete next[libId];
+          return next;
+        });
+      } catch (err) {
+        console.error(`Failed to delete library ${libId}`);
+      } finally {
+        setDeleting(prev => {
+          const next = new Set(prev);
+          next.delete(libId);
+          return next;
+        });
+      }
+    }
+
+    setSelectedIds(new Set());
+  };
+
   const remainingItems = Object.values(editingItems);
+  const allSelected = remainingItems.length > 0 && selectedIds.size === remainingItems.length;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
         
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0">
@@ -280,6 +441,7 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
                 <span className="text-green-600 font-semibold">{matched} auto-matched</span>
                 {' · '}
                 <span className="text-orange-600 font-semibold">{remainingItems.length} need review</span>
+                {selectedIds.size > 0 && <> · <span className="text-blue-600 font-semibold">{selectedIds.size} selected</span></>}
               </p>
             </div>
           </div>
@@ -291,9 +453,56 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
         {/* Instructions */}
         <div className="px-6 py-3 bg-blue-50 border-b border-blue-100 flex-shrink-0">
           <p className="text-sm text-blue-800">
-            <strong>Review unmatched libraries below.</strong> Edit the dropdowns to assign the correct Stage/Section/Subject, then click <strong>Save</strong>. Or <strong>Remove</strong> libraries you don't need.
+            <strong>⚠️ IMPORTANT:</strong> If subjects are missing from dropdowns, go to <strong>Subjects tab</strong> and create them first (use simple codes like <code className="bg-blue-100 px-1 rounded">PHYS</code>, not <code className="bg-red-100 px-1 rounded">PHYS-AR</code>).
           </p>
         </div>
+
+        {/* ✅ BULK ACTIONS BAR */}
+        {remainingItems.length > 0 && (
+          <div className="px-6 py-3 bg-gray-50 border-b flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input 
+                  type="checkbox" 
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded text-blue-600 cursor-pointer"
+                />
+                <span className="text-sm font-medium text-gray-700">
+                  {allSelected ? 'Deselect All' : 'Select All'}
+                </span>
+              </label>
+              {selectedIds.size > 0 && (
+                <button 
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-gray-400 hover:text-gray-600 underline">
+                  Clear ({selectedIds.size})
+                </button>
+              )}
+            </div>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-2">
+                <Button 
+                  size="sm"
+                  onClick={handleSaveSelected}
+                  disabled={saving}
+                  className="bg-green-600 hover:bg-green-700 text-white">
+                  <Save className="w-3.5 h-3.5 mr-1.5"/>
+                  Save Selected ({selectedIds.size})
+                </Button>
+                <Button 
+                  size="sm"
+                  variant="outline"
+                  onClick={handleDeleteSelected}
+                  disabled={saving}
+                  className="text-red-600 border-red-300 hover:bg-red-50">
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5"/>
+                  Remove Selected
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Scrollable list */}
         <div className="overflow-y-auto flex-1 px-6 py-4">
@@ -304,55 +513,75 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
               <p className="text-sm text-gray-500">Close this dialog to see your assignments.</p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {remainingItems.map(item => {
-                const stageObj = stages.find(s => s.id === Number(item.stage_id));
+                if (!item) return null;
+                
+                const stageObj = stages.find(s => s.id === parseInt(item.stage_id));
                 const availableSections = stageObj ? sections.filter(s => s.stage_id === stageObj.id) : [];
-                const subjectObj = subjects.find(s => s.id === Number(item.subject_id));
+                const subjectObj = subjects.find(s => s.id === parseInt(item.subject_id));
                 const isDeleting = deleting.has(item.library_id);
+                const isSelected = selectedIds.has(item.library_id);
+                
+                // Check if all required fields are filled
+                const canSave = item.stage_id && item.stage_id !== '' && item.subject_id && item.subject_id !== '';
 
                 return (
                   <div key={item.library_id} 
                     className={`border-2 rounded-lg p-4 transition-all ${
-                      isDeleting ? 'border-red-300 bg-red-50 opacity-50' : 'border-orange-200 bg-orange-50'
+                      isDeleting ? 'border-red-300 bg-red-50 opacity-50' : 
+                      isSelected ? 'border-blue-300 bg-blue-50' :
+                      'border-orange-200 bg-orange-50'
                     }`}>
                     
-                    {/* Library name + parsed codes */}
-                    <div className="mb-3">
-                      <p className="font-semibold text-gray-800 mb-1">{item.library_name}</p>
-                      <div className="flex gap-2 flex-wrap">
-                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: {item.library_id}</span>
-                        {item.stage_code && (
-                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
-                            Parsed Stage: {item.stage_code}
-                          </span>
-                        )}
-                        {item.section_code && (
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-mono">
-                            Parsed Section: {item.section_code}
-                          </span>
-                        )}
-                        {item.subject_code && (
-                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-mono">
-                            Parsed Subject: {item.subject_code}
-                          </span>
-                        )}
+                    {/* Selection checkbox + Library name */}
+                    <div className="flex items-start gap-3 mb-3">
+                      <input 
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectOne(item.library_id)}
+                        disabled={isDeleting}
+                        className="mt-1 w-4 h-4 rounded text-blue-600 cursor-pointer flex-shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-800 mb-1 truncate">{item.library_name}</p>
+                        <div className="flex gap-2 flex-wrap">
+                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">ID: {item.library_id}</span>
+                          {item.stage_code && (
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
+                              Parsed: {item.stage_code}
+                            </span>
+                          )}
+                          {item.section_code && (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-mono">
+                              {item.section_code}
+                            </span>
+                          )}
+                          {item.subject_code && (
+                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-mono">
+                              {item.subject_code}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    {/* Editable dropdowns */}
+                    {/* ✅ FIXED DROPDOWNS - Controlled components with proper value binding */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                       
-                      {/* Stage */}
+                      {/* Stage Dropdown */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Stage *
+                          Stage <span className="text-red-500">*</span>
                         </label>
                         <select 
-                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                          value={item.stage_id}
-                          onChange={e => updateItem(item.library_id, 'stage_id', e.target.value)}
-                          disabled={isDeleting}>
+                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          value={item.stage_id || ''}
+                          onChange={(e) => {
+                            console.log('Stage changed to:', e.target.value);
+                            updateItem(item.library_id, 'stage_id', e.target.value);
+                          }}
+                          disabled={isDeleting || saving}>
                           <option value="">Select stage...</option>
                           {stages.map(s => (
                             <option key={s.id} value={s.id}>
@@ -362,16 +591,19 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
                         </select>
                       </div>
 
-                      {/* Section */}
+                      {/* Section Dropdown */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Section <span className="text-gray-400 font-normal">(empty = common)</span>
+                          Section <span className="text-gray-400 text-xs">(optional for common subjects)</span>
                         </label>
                         <select 
-                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                          value={item.section_id}
-                          onChange={e => updateItem(item.library_id, 'section_id', e.target.value)}
-                          disabled={!item.stage_id || isDeleting}>
+                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          value={item.section_id || ''}
+                          onChange={(e) => {
+                            console.log('Section changed to:', e.target.value);
+                            updateItem(item.library_id, 'section_id', e.target.value);
+                          }}
+                          disabled={!item.stage_id || item.stage_id === '' || isDeleting || saving}>
                           <option value="">None (Common Subject)</option>
                           {availableSections.map(s => (
                             <option key={s.id} value={s.id}>
@@ -381,16 +613,19 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
                         </select>
                       </div>
 
-                      {/* Subject */}
+                      {/* Subject Dropdown - SHOW ALL SUBJECTS */}
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                          Subject *
+                          Subject <span className="text-red-500">*</span>
                         </label>
                         <select 
-                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                          value={item.subject_id}
-                          onChange={e => updateItem(item.library_id, 'subject_id', e.target.value)}
-                          disabled={isDeleting}>
+                          className="w-full h-9 px-3 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          value={item.subject_id || ''}
+                          onChange={(e) => {
+                            console.log('Subject changed to:', e.target.value);
+                            updateItem(item.library_id, 'subject_id', e.target.value);
+                          }}
+                          disabled={isDeleting || saving}>
                           <option value="">Select subject...</option>
                           {subjects.map(s => (
                             <option key={s.id} value={s.id}>
@@ -406,8 +641,8 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
                       <Button 
                         size="sm"
                         onClick={() => handleSaveOne(item.library_id)}
-                        disabled={saving || !item.stage_id || !item.subject_id || isDeleting}
-                        className="flex-1 bg-green-600 hover:bg-green-700 text-white">
+                        disabled={!canSave || saving || isDeleting}
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50 disabled:cursor-not-allowed">
                         <Save className="w-3.5 h-3.5 mr-1.5"/>
                         {saving ? 'Saving...' : 'Save Assignment'}
                       </Button>
@@ -417,22 +652,31 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
                         variant="outline"
                         onClick={() => handleDeleteOne(item.library_id)}
                         disabled={saving || isDeleting}
-                        className="text-red-600 border-red-300 hover:bg-red-50">
+                        className="text-red-600 border-red-300 hover:bg-red-50 disabled:opacity-50">
                         <Trash2 className="w-3.5 h-3.5 mr-1.5"/>
                         {isDeleting ? 'Removing...' : 'Remove'}
                       </Button>
                     </div>
 
-                    {/* Validation hint */}
-                    {(!item.stage_id || !item.subject_id) && (
+                    {/* Validation messages */}
+                    {!canSave && (
                       <p className="text-xs text-orange-600 mt-2 flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3"/>
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0"/>
                         Stage and Subject are required to save
                       </p>
                     )}
                     
+                    {/* Subject not found warning */}
+                    {item.subject_code && (!item.subject_id || item.subject_id === '') && (
+                      <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0"/>
+                        Subject <code className="bg-red-100 px-1 rounded font-mono">{item.subject_code}</code> not found. 
+                        Create it in Subjects tab first.
+                      </p>
+                    )}
+                    
                     {/* Subject compatibility hint */}
-                    {item.subject_id && subjectObj && (
+                    {item.subject_id && item.subject_id !== '' && subjectObj && (
                       <p className="text-xs text-gray-500 mt-1">
                         {subjectObj.is_common 
                           ? '✓ Common subject — leave Section empty to apply to all sections'
@@ -455,6 +699,7 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
                 : `${remainingItems.length} ${remainingItems.length === 1 ? 'library' : 'libraries'} remaining`}
             </p>
             <Button onClick={onClose} className="bg-gray-800 hover:bg-gray-900 text-white">
+              <X className="w-4 h-4 mr-2"/>
               {remainingItems.length === 0 ? 'Close' : 'Close & Review Later'}
             </Button>
           </div>
@@ -463,6 +708,8 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
     </div>
   );
 };
+
+export default UnmatchedModal;
 
 // ── Main Settings ─────────────────────────────────────────────────────────────
 const Settings = () => {
