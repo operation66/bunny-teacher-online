@@ -1,6 +1,6 @@
 # FILE: /backend/financial_schemas.py
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 # ── STAGE ─────────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ class Section(SectionBase):
 class SubjectBase(BaseModel):
     code: str = Field(..., description="Subject code e.g. MATH, AR, ISC, BIO")
     name: str = Field(..., description="Subject name e.g. Mathematics, Arabic")
-    is_common: bool = Field(False, description="True = appears in all sections (GEN + LANG)")
+    is_common: bool = Field(False, description="True = appears in all sections")
 
 class SubjectCreate(SubjectBase):
     pass
@@ -62,20 +62,16 @@ class TeacherAssignmentBase(BaseModel):
     library_id: int
     library_name: str
     stage_id: int
-    section_id: Optional[int] = None   # None only when no sections defined yet
+    section_id: Optional[int] = None
     subject_id: int
     tax_rate: float = Field(0.0, ge=0.0, le=1.0)
-    revenue_percentage: float = Field(0.95, ge=0.0, le=1.0)   # default 95%
+    revenue_percentage: float = Field(0.95, ge=0.0, le=1.0)
 
 class TeacherAssignmentCreate(TeacherAssignmentBase):
     pass
 
-# FULL update schema – allows editing every column, not just tax/revenue
 class TeacherAssignmentUpdate(BaseModel):
-    library_id: Optional[int] = None
-    library_name: Optional[str] = None
-    stage_id: Optional[int] = None
-    section_id: Optional[int] = None          # explicitly None = common (no section)
+    section_id: Optional[int] = None
     subject_id: Optional[int] = None
     tax_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
     revenue_percentage: Optional[float] = Field(None, ge=0.0, le=1.0)
@@ -116,6 +112,8 @@ class FinancialPeriodBase(BaseModel):
     name: str = Field(..., description="Period name e.g. Q1 2025")
     year: int
     notes: Optional[str] = None
+    # List of month strings e.g. ["2025-10","2025-11","2025-12"]
+    months: Optional[List[str]] = Field(default_factory=list, description="Selected months for this period")
 
 class FinancialPeriodCreate(FinancialPeriodBase):
     pass
@@ -124,6 +122,7 @@ class FinancialPeriodUpdate(BaseModel):
     name: Optional[str] = None
     year: Optional[int] = None
     notes: Optional[str] = None
+    months: Optional[List[str]] = None
 
 class FinancialPeriod(FinancialPeriodBase):
     id: int
@@ -171,6 +170,8 @@ class TeacherPayment(BaseModel):
     subject_id: int
     total_watch_time_seconds: int
     watch_time_percentage: float
+    # NEW: per-month breakdown for hover tooltip
+    monthly_watch_breakdown: Optional[Dict[str, int]] = Field(default_factory=dict)
     section_total_orders: int
     section_order_percentage: float
     base_revenue: float
@@ -189,6 +190,23 @@ class TeacherPaymentWithDetails(TeacherPayment):
     subject_name: Optional[str] = None
     subject_is_common: Optional[bool] = None
 
+# ── LIBRARY PREVIEW (for approval popup) ──────────────────────────────────────
+
+class LibraryPreview(BaseModel):
+    library_id: int
+    library_name: str
+    subject_name: Optional[str] = None
+    subject_is_common: Optional[bool] = None
+    section_name: Optional[str] = None
+    total_watch_time_seconds: int
+    monthly_watch_breakdown: Dict[str, int]
+    has_analytics: bool  # False if all months are 0
+
+class LibraryPreviewResponse(BaseModel):
+    period_months: List[str]
+    libraries: List[LibraryPreview]
+    no_analytics_count: int
+
 # ── AGGREGATE ─────────────────────────────────────────────────────────────────
 
 class FinancialData(BaseModel):
@@ -202,6 +220,7 @@ class FinancialData(BaseModel):
 class CalculatePaymentsRequest(BaseModel):
     period_id: int
     stage_id: int
+    excluded_library_ids: Optional[List[int]] = Field(default_factory=list)
 
 class CalculatePaymentsResponse(BaseModel):
     success: bool
