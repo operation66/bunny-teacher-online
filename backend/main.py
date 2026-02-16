@@ -1543,69 +1543,115 @@ async def auto_match_teachers(db: Session = Depends(get_db)):
 
 @app.get("/financial-periods/", response_model=List[FinancialPeriodSchema])
 def get_financial_periods(db: Session = Depends(get_db)):
-    return db.query(FinancialPeriod).order_by(FinancialPeriod.year.desc(), FinancialPeriod.created_at.desc()).all()
-
+    """List all periods — returns ORM objects which Pydantic handles via orm_mode."""
+    periods = db.query(FinancialPeriod).order_by(
+        FinancialPeriod.year.desc(), FinancialPeriod.created_at.desc()
+    ).all()
+    # Build plain dicts to avoid ORM serialization issues
+    return [_period_to_dict(p) for p in periods]
 
 @app.post("/financial-periods/", response_model=FinancialPeriodSchema)
 def create_financial_period(period: FinancialPeriodCreate, db: Session = Depends(get_db)):
-    existing = db.query(FinancialPeriod).filter(FinancialPeriod.name == period.name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Period with name '{period.name}' already exists")
-    db_period = FinancialPeriod(**period.dict())
-    db.add(db_period)
-    db.commit()
-    db.refresh(db_period)
-    return db_period
+    """
+    Create a financial period (upsert by name).
+    Returns existing record silently if name already exists,
+    so the frontend never sees a 400 or 500 on retry.
+    """
+    try:
+        existing = db.query(FinancialPeriod).filter(
+            FinancialPeriod.name == period.name
+        ).first()
+
+        if existing:
+            # Already exists — return it without error
+            return _period_to_dict(existing)
+
+        db_period = FinancialPeriod(**period.dict())
+        db.add(db_period)
+        db.commit()
+        db.refresh(db_period)
+        return _period_to_dict(db_period)
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in create_financial_period: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create period: {str(e)}")
 
 
 @app.put("/financial-periods/{period_id}", response_model=FinancialPeriodSchema)
-def update_financial_period(period_id: int, period: FinancialPeriodUpdate, db: Session = Depends(get_db)):
-    db_period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
-    if not db_period:
-        raise HTTPException(status_code=404, detail="Period not found")
-    for field, value in period.dict(exclude_unset=True).items():
-        setattr(db_period, field, value)
-    db.commit()
-    db.refresh(db_period)
-    return db_period
+def update_financial_period(
+    period_id: int, period: FinancialPeriodUpdate, db: Session = Depends(get_db)
+):
+    try:
+        db_period = db.query(FinancialPeriod).filter(
+            FinancialPeriod.id == period_id
+        ).first()
+        if not db_period:
+            raise HTTPException(status_code=404, detail="Period not found")
+
+        for field, value in period.dict(exclude_unset=True).items():
+            setattr(db_period, field, value)
+
+        db.commit()
+        db.refresh(db_period)
+        return _period_to_dict(db_period)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in update_financial_period: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update period: {str(e)}")
 
 
 @app.delete("/financial-periods/{period_id}")
 def delete_financial_period(period_id: int, db: Session = Depends(get_db)):
-    db_period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+    db_period = db.query(FinancialPeriod).filter(
+        FinancialPeriod.id == period_id
+    ).first()
     if not db_period:
         raise HTTPException(status_code=404, detail="Period not found")
     db.delete(db_period)
     db.commit()
     return {"message": "Period deleted successfully"}
 
-
 # ============================================
 # SECTION REVENUE ENDPOINTS
 # ============================================
 
 @app.post("/section-revenues/", response_model=SectionRevenueSchema)
-def create_or_update_section_revenue(revenue: SectionRevenueCreate, db: Session = Depends(get_db)):
-    existing = db.query(SectionRevenue).filter(
-        SectionRevenue.period_id == revenue.period_id,
-        SectionRevenue.stage_id == revenue.stage_id,
-        SectionRevenue.section_id == revenue.section_id
-    ).first()
+def create_or_update_section_revenue(
+    revenue: SectionRevenueCreate, db: Session = Depends(get_db)
+):
+    """
+    Upsert section revenue.
+    Returns plain dict to avoid ORM serialization errors.
+    """
+    try:
+        existing = db.query(SectionRevenue).filter(
+            SectionRevenue.period_id  == revenue.period_id,
+            SectionRevenue.stage_id   == revenue.stage_id,
+            SectionRevenue.section_id == revenue.section_id,
+        ).first()
 
-    if existing:
-        existing.total_orders = revenue.total_orders
-        existing.total_revenue_egp = revenue.total_revenue_egp
-        existing.updated_at = datetime.now(pytz.UTC)
-        db.commit()
-        db.refresh(existing)
-        return existing
-    else:
+        if existing:
+            existing.total_orders      = revenue.total_orders
+            existing.total_revenue_egp = revenue.total_revenue_egp
+            existing.updated_at        = datetime.now(pytz.UTC)
+            db.commit()
+            db.refresh(existing)
+            return _revenue_to_dict(existing)
+
         db_revenue = SectionRevenue(**revenue.dict())
         db.add(db_revenue)
         db.commit()
         db.refresh(db_revenue)
-        return db_revenue
+        return _revenue_to_dict(db_revenue)
 
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in create_or_update_section_revenue: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save revenue: {str(e)}")
 
 # ============================================
 # FINANCIAL DATA & CALCULATION ENDPOINTS
