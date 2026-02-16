@@ -1308,42 +1308,41 @@ def _assignment_with_details_to_dict(obj, stage_name, section_name, subject_name
 
 def _payment_with_details_to_dict(obj, stage_name, section_name, subject_name, subject_is_common) -> dict:
     return {
-        "id":                       obj.id,
-        "period_id":                obj.period_id,
-        "assignment_id":            obj.assignment_id,
-        "library_id":               obj.library_id,
-        "library_name":             obj.library_name,
-        "stage_id":                 obj.stage_id,
-        "section_id":               obj.section_id,
-        "subject_id":               obj.subject_id,
-        "total_watch_time_seconds": obj.total_watch_time_seconds,
-        "watch_time_percentage":    obj.watch_time_percentage,
-        "section_total_orders":     obj.section_total_orders,
-        "section_order_percentage": obj.section_order_percentage,
-        "base_revenue":             obj.base_revenue,
-        "revenue_percentage_applied": obj.revenue_percentage_applied,
-        "calculated_revenue":       obj.calculated_revenue,
-        "tax_rate_applied":         obj.tax_rate_applied,
-        "tax_amount":               obj.tax_amount,
-        "final_payment":            obj.final_payment,
-        "created_at":               obj.created_at,
-        "stage_name":               stage_name,
-        "section_name":             section_name,
-        "subject_name":             subject_name,
-        "subject_is_common":        subject_is_common,
+        "id":                          obj.id,
+        "period_id":                   obj.period_id,
+        "assignment_id":               obj.assignment_id,
+        "library_id":                  obj.library_id,
+        "library_name":                obj.library_name,
+        "stage_id":                    obj.stage_id,
+        "section_id":                  obj.section_id,
+        "subject_id":                  obj.subject_id,
+        "total_watch_time_seconds":    obj.total_watch_time_seconds,
+        "watch_time_percentage":       obj.watch_time_percentage,
+        "monthly_watch_breakdown":     obj.monthly_watch_breakdown or {},
+        "section_total_orders":        obj.section_total_orders,
+        "section_order_percentage":    obj.section_order_percentage,
+        "base_revenue":                obj.base_revenue,
+        "revenue_percentage_applied":  obj.revenue_percentage_applied,
+        "calculated_revenue":          obj.calculated_revenue,
+        "tax_rate_applied":            obj.tax_rate_applied,
+        "tax_amount":                  obj.tax_amount,
+        "final_payment":               obj.final_payment,
+        "created_at":                  obj.created_at,
+        "stage_name":                  stage_name,
+        "section_name":                section_name,
+        "subject_name":                subject_name,
+        "subject_is_common":           subject_is_common,
     }
 
-
 def _period_to_dict(obj) -> dict:
-    """Serialize a FinancialPeriod ORM object to a plain dict."""
     return {
         "id":         obj.id,
         "name":       obj.name,
         "year":       obj.year,
         "notes":      obj.notes,
+        "months":     obj.months or [],
         "created_at": obj.created_at,
     }
-
 
 def _revenue_to_dict(obj) -> dict:
     """Serialize a SectionRevenue ORM object to a plain dict."""
@@ -1857,10 +1856,127 @@ def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to load financial data: {str(e)}")
 
+@app.get("/financials/{period_id}/{stage_id}/libraries-preview")
+def get_libraries_preview(period_id: int, stage_id: int, db: Session = Depends(get_db)):
+    """
+    Returns all assigned libraries for this stage with their watch time
+    broken down per period month. Libraries with zero analytics are flagged.
+    Used by the approval popup before calculation.
+    """
+    try:
+        period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+        if not period:
+            raise HTTPException(status_code=404, detail="Period not found")
+
+        period_months = period.months or []  # e.g. ["2025-10","2025-11","2025-12"]
+
+        assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.stage_id == stage_id
+        ).all()
+
+        subject_cache = {}
+        def get_subject(subject_id):
+            if subject_id not in subject_cache:
+                subject_cache[subject_id] = db.query(Subject).filter(Subject.id == subject_id).first()
+            return subject_cache[subject_id]
+
+        section_cache = {}
+        def get_section(section_id):
+            if section_id not in section_cache:
+                section_cache[section_id] = db.query(Section).filter(Section.id == section_id).first()
+            return section_cache[section_id]
+
+        # Build per-library watch time breakdown
+        libraries = []
+        seen = set()  # avoid duplicates (common subjects appear multiple times)
+
+        for a in assignments:
+            key = (a.library_id, a.section_id)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            subj = get_subject(a.subject_id)
+            sec  = get_section(a.section_id) if a.section_id else None
+
+            # Per-month breakdown
+            monthly_breakdown = {}
+            total_seconds = 0
+
+            for month_str in period_months:
+                try:
+                    year, month = map(int, month_str.split("-"))
+                except ValueError:
+                    continue
+                stat = db.query(models.LibraryHistoricalStats).filter(
+                    models.LibraryHistoricalStats.library_id == a.library_id,
+                    models.LibraryHistoricalStats.year  == year,
+                    models.LibraryHistoricalStats.month == month,
+                ).first()
+                secs = stat.total_watch_time_seconds if stat else 0
+                monthly_breakdown[month_str] = secs
+                total_seconds += secs
+
+            libraries.append({
+                "library_id":             a.library_id,
+                "library_name":           a.library_name,
+                "subject_name":           subj.name if subj else None,
+                "subject_is_common":      subj.is_common if subj else False,
+                "section_name":           sec.name if sec else "All Sections",
+                "total_watch_time_seconds": total_seconds,
+                "monthly_watch_breakdown":  monthly_breakdown,
+                "has_analytics":          total_seconds > 0,
+            })
+
+        no_analytics_count = sum(1 for lib in libraries if not lib["has_analytics"])
+
+        return {
+            "period_months":      period_months,
+            "libraries":          libraries,
+            "no_analytics_count": no_analytics_count,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_libraries_preview: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/calculate-payments/{period_id}/{stage_id}", response_model=CalculatePaymentsResponse)
-async def calculate_payments(period_id: int, stage_id: int, db: Session = Depends(get_db)):
+async def calculate_payments(
+    period_id: int,
+    stage_id: int,
+    request: dict = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Calculate teacher payments with correct logic:
+
+    WATCH TIME:  Sum only the specific months listed in period.months
+                 (not all-year). Per-month breakdown stored for hover tooltip.
+
+    COMMON SUBJECTS (is_common=True, e.g. Arabic, English):
+      - These teachers appear in ALL sections.
+      - Their share of each section's revenue is SCALED by the orders ratio.
+        Example: GEN_orders=1000, LANG_orders=3000, total=4000
+          Arabic teacher in GEN gets: GEN_revenue * (1000/4000) * (arabic_wt_in_GEN / total_common_wt_in_GEN)
+          Arabic teacher in LANG gets: LANG_revenue * (3000/4000) * (arabic_wt_in_LANG / total_common_wt_in_LANG)
+      - watch_time_percentage is computed among COMMON teachers of same subject in the section
+
+    SECTION-SPECIFIC SUBJECTS:
+      - watch_time_percentage = teacher_wt / sum_of_all_specific_teachers_wt_in_section
+      - payment = section_revenue * (1 - common_order_pct) * watch_time_pct * revenue_pct * (1 - tax)
+        where common_order_pct = this_section_orders / total_all_orders
+
+    NOTE: excluded_library_ids are skipped (passed from approval popup).
+    """
     try:
+        excluded_ids = []
+        if request and isinstance(request, dict):
+            excluded_ids = request.get("excluded_library_ids", [])
+
         period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
         if not period:
             raise HTTPException(status_code=404, detail="Period not found")
@@ -1869,6 +1985,8 @@ async def calculate_payments(period_id: int, stage_id: int, db: Session = Depend
         if not stage:
             raise HTTPException(status_code=404, detail="Stage not found")
 
+        period_months = period.months or []  # e.g. ["2025-10","2025-11"]
+
         section_revenues = db.query(SectionRevenue).filter(
             SectionRevenue.period_id == period_id,
             SectionRevenue.stage_id  == stage_id,
@@ -1876,95 +1994,191 @@ async def calculate_payments(period_id: int, stage_id: int, db: Session = Depend
         if not section_revenues:
             raise HTTPException(status_code=400, detail="No revenue data found. Please add revenue data first.")
 
-        sections_data = [{"section_id": rev.section_id, "total_orders": rev.total_orders}
-                         for rev in section_revenues]
-        section_order_percentages = calculate_section_order_percentages(sections_data)
-
         assignments = db.query(TeacherAssignment).filter(
             TeacherAssignment.stage_id == stage_id
         ).all()
+        # Filter out excluded libraries
+        if excluded_ids:
+            assignments = [a for a in assignments if a.library_id not in excluded_ids]
         if not assignments:
-            raise HTTPException(status_code=400, detail="No teacher assignments found. Please assign teachers first.")
+            raise HTTPException(status_code=400, detail="No teacher assignments found after exclusions.")
 
-        # Delete old payments for this period+stage
+        # Delete old payments
         db.query(TeacherPayment).filter(
             TeacherPayment.period_id == period_id,
             TeacherPayment.stage_id  == stage_id,
         ).delete()
 
-        # Build watch-time map
+        # ── Build watch-time map with monthly breakdown ──────────────────────
+        # watch_time_map[library_id] = total_seconds (for period months only)
+        # monthly_map[library_id]    = {"2025-10": secs, "2025-11": secs, ...}
         watch_time_map = {}
-        for assignment in assignments:
-            stats = db.query(models.LibraryHistoricalStats).filter(
-                models.LibraryHistoricalStats.library_id == assignment.library_id,
-                models.LibraryHistoricalStats.year       == period.year,
-            ).all()
-            watch_time_map[assignment.library_id] = sum(s.total_watch_time_seconds for s in stats)
+        monthly_map    = {}
 
-        # Subject cache
+        for a in assignments:
+            lib_id = a.library_id
+            if lib_id in watch_time_map:
+                continue  # already computed
+
+            breakdown = {}
+            total = 0
+
+            if period_months:
+                for month_str in period_months:
+                    try:
+                        yr, mo = map(int, month_str.split("-"))
+                    except ValueError:
+                        continue
+                    stat = db.query(models.LibraryHistoricalStats).filter(
+                        models.LibraryHistoricalStats.library_id == lib_id,
+                        models.LibraryHistoricalStats.year  == yr,
+                        models.LibraryHistoricalStats.month == mo,
+                    ).first()
+                    secs = stat.total_watch_time_seconds if stat else 0
+                    breakdown[month_str] = secs
+                    total += secs
+            else:
+                # Fallback: use all stats for the period year
+                stats = db.query(models.LibraryHistoricalStats).filter(
+                    models.LibraryHistoricalStats.library_id == lib_id,
+                    models.LibraryHistoricalStats.year       == period.year,
+                ).all()
+                for stat in stats:
+                    key  = f"{stat.year}-{stat.month:02d}"
+                    secs = stat.total_watch_time_seconds
+                    breakdown[key] = secs
+                    total += secs
+
+            watch_time_map[lib_id] = total
+            monthly_map[lib_id]    = breakdown
+
+        # ── Subject / section caches ─────────────────────────────────────────
         subject_cache = {}
-        def get_subject(subject_id):
-            if subject_id not in subject_cache:
-                subject_cache[subject_id] = db.query(Subject).filter(Subject.id == subject_id).first()
-            return subject_cache[subject_id]
+        def get_subject(sid):
+            if sid not in subject_cache:
+                subject_cache[sid] = db.query(Subject).filter(Subject.id == sid).first()
+            return subject_cache[sid]
 
-        # Section lookup
         section_map = {s.id: s for s in db.query(Section).filter(Section.stage_id == stage_id).all()}
 
-        payments_created = []
-        total_payment_sum = 0.0
+        # ── Orders ratio across all sections ─────────────────────────────────
+        total_all_orders = sum(rev.total_orders for rev in section_revenues) or 1
+
+        # Map section_id → order fraction
+        order_fraction = {
+            rev.section_id: (rev.total_orders / total_all_orders)
+            for rev in section_revenues
+        }
+
+        # ── Group assignments by section ─────────────────────────────────────
+        # common_assignments: those with is_common=True (section_id != None per section)
+        # specific_assignments: those with is_common=False
+
+        payments_created   = []
+        total_payment_sum  = 0.0
 
         for revenue in section_revenues:
+            sec_id      = revenue.section_id
+            sec_revenue = revenue.total_revenue_egp
+            sec_orders  = revenue.total_orders
+            ord_frac    = order_fraction.get(sec_id, 1.0)
+
+            # Assignments for this section:
+            # - section-specific teachers: a.section_id == sec_id
+            # - common teachers: a.section_id == sec_id (common teachers are duplicated per section by auto-match)
             section_assignments = [
                 a for a in assignments
-                if a.section_id == revenue.section_id or a.section_id is None
+                if a.section_id == sec_id or a.section_id is None
             ]
-            total_section_watch_time = sum(
-                watch_time_map.get(a.library_id, 0) for a in section_assignments
-            )
 
-            for assignment in section_assignments:
-                teacher_watch_time = watch_time_map.get(assignment.library_id, 0)
-                subj = get_subject(assignment.subject_id)
-                section_order_pct = 1.0
-                if subj and subj.is_common:
-                    section_order_pct = section_order_percentages.get(revenue.section_id, 1.0)
+            common_assignments   = [a for a in section_assignments if get_subject(a.subject_id) and get_subject(a.subject_id).is_common]
+            specific_assignments = [a for a in section_assignments if not (get_subject(a.subject_id) and get_subject(a.subject_id).is_common)]
 
-                payment_calc = calculate_teacher_payment(
-                    section_revenue=revenue.total_revenue_egp,
-                    teacher_watch_time_seconds=teacher_watch_time,
-                    total_section_watch_time_seconds=total_section_watch_time,
-                    revenue_percentage=assignment.revenue_percentage,
-                    tax_rate=assignment.tax_rate,
-                    section_order_percentage=section_order_pct,
-                )
+            # ── Common subjects revenue pool for this section ─────────────────
+            # The fraction of revenue attributable to common subjects:
+            # ord_frac = this_section_orders / total_orders
+            common_revenue_pool = sec_revenue * ord_frac
+
+            # ── Specific subjects revenue pool ────────────────────────────────
+            specific_revenue_pool = sec_revenue - common_revenue_pool
+
+            # ── Watch time totals per group ───────────────────────────────────
+            total_common_wt   = sum(watch_time_map.get(a.library_id, 0) for a in common_assignments)
+            total_specific_wt = sum(watch_time_map.get(a.library_id, 0) for a in specific_assignments)
+
+            # ── Calculate payments for COMMON assignments ─────────────────────
+            for a in common_assignments:
+                teacher_wt = watch_time_map.get(a.library_id, 0)
+                wt_pct     = (teacher_wt / total_common_wt) if total_common_wt > 0 else 0.0
+                subj       = get_subject(a.subject_id)
+
+                base_rev         = common_revenue_pool * wt_pct
+                calc_rev         = base_rev * a.revenue_percentage
+                tax_amt          = calc_rev * a.tax_rate
+                final            = calc_rev - tax_amt
 
                 payment = TeacherPayment(
                     period_id=period_id,
-                    assignment_id=assignment.id,
-                    library_id=assignment.library_id,
-                    library_name=assignment.library_name,
+                    assignment_id=a.id,
+                    library_id=a.library_id,
+                    library_name=a.library_name,
                     stage_id=stage_id,
-                    section_id=revenue.section_id,
-                    subject_id=assignment.subject_id,
-                    total_watch_time_seconds=teacher_watch_time,
-                    watch_time_percentage=payment_calc["watch_time_percentage"],
-                    section_total_orders=revenue.total_orders,
-                    section_order_percentage=payment_calc["section_order_percentage"],
-                    base_revenue=payment_calc["base_revenue"],
-                    revenue_percentage_applied=payment_calc["revenue_percentage_applied"],
-                    calculated_revenue=payment_calc["calculated_revenue"],
-                    tax_rate_applied=payment_calc["tax_rate_applied"],
-                    tax_amount=payment_calc["tax_amount"],
-                    final_payment=payment_calc["final_payment"],
+                    section_id=sec_id,
+                    subject_id=a.subject_id,
+                    total_watch_time_seconds=teacher_wt,
+                    watch_time_percentage=wt_pct,
+                    monthly_watch_breakdown=monthly_map.get(a.library_id, {}),
+                    section_total_orders=sec_orders,
+                    section_order_percentage=ord_frac,
+                    base_revenue=base_rev,
+                    revenue_percentage_applied=a.revenue_percentage,
+                    calculated_revenue=calc_rev,
+                    tax_rate_applied=a.tax_rate,
+                    tax_amount=tax_amt,
+                    final_payment=final,
                 )
                 db.add(payment)
                 payments_created.append(payment)
-                total_payment_sum += payment.final_payment
+                total_payment_sum += final
+
+            # ── Calculate payments for SPECIFIC assignments ───────────────────
+            for a in specific_assignments:
+                teacher_wt = watch_time_map.get(a.library_id, 0)
+                wt_pct     = (teacher_wt / total_specific_wt) if total_specific_wt > 0 else 0.0
+                subj       = get_subject(a.subject_id)
+
+                base_rev   = specific_revenue_pool * wt_pct
+                calc_rev   = base_rev * a.revenue_percentage
+                tax_amt    = calc_rev * a.tax_rate
+                final      = calc_rev - tax_amt
+
+                payment = TeacherPayment(
+                    period_id=period_id,
+                    assignment_id=a.id,
+                    library_id=a.library_id,
+                    library_name=a.library_name,
+                    stage_id=stage_id,
+                    section_id=sec_id,
+                    subject_id=a.subject_id,
+                    total_watch_time_seconds=teacher_wt,
+                    watch_time_percentage=wt_pct,
+                    monthly_watch_breakdown=monthly_map.get(a.library_id, {}),
+                    section_total_orders=sec_orders,
+                    section_order_percentage=ord_frac,
+                    base_revenue=base_rev,
+                    revenue_percentage_applied=a.revenue_percentage,
+                    calculated_revenue=calc_rev,
+                    tax_rate_applied=a.tax_rate,
+                    tax_amount=tax_amt,
+                    final_payment=final,
+                )
+                db.add(payment)
+                payments_created.append(payment)
+                total_payment_sum += final
 
         db.commit()
 
-        # Refresh and serialize to dicts
+        # Serialize
         payments_with_details = []
         for payment in payments_created:
             db.refresh(payment)
