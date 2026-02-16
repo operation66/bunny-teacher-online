@@ -1230,19 +1230,30 @@ def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db))
         }
         result.append(TeacherAssignmentWithDetails(**assignment_dict))
     return result
+    
+def _period_to_dict(obj) -> dict:
+    """Serialize a FinancialPeriod ORM object to a plain dict."""
+    return {
+        "id":         obj.id,
+        "name":       obj.name,
+        "year":       obj.year,
+        "notes":      obj.notes,
+        "created_at": obj.created_at,
+    }
 
-# ============================================================
-# REPLACE the create_teacher_assignment function in main.py
-# with this complete version.
-#
-# ROOT CAUSE of 500 error:
-#   FastAPI response_model=TeacherAssignmentSchema validation fails
-#   when the function returns an SQLAlchemy ORM object directly.
-#   Other endpoints work because they build dicts manually first.
-#   The ORM object has _sa_instance_state which breaks serialization.
-#
-# FIX: serialize ORM object to dict before returning.
-# ============================================================
+
+def _revenue_to_dict(obj) -> dict:
+    """Serialize a SectionRevenue ORM object to a plain dict."""
+    return {
+        "id":                obj.id,
+        "period_id":         obj.period_id,
+        "stage_id":          obj.stage_id,
+        "section_id":        obj.section_id,
+        "total_orders":      obj.total_orders,
+        "total_revenue_egp": obj.total_revenue_egp,
+        "created_at":        obj.created_at,
+        "updated_at":        obj.updated_at,
+    }
 
 def _assignment_to_dict(obj) -> dict:
     """Convert a TeacherAssignment ORM object to a plain dict safe for FastAPI response."""
