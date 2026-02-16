@@ -65,6 +65,41 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to create financial tables: {e}")
 
+try:
+    logger.info("Checking for missing columns in financial tables...")
+    from sqlalchemy import text as sql_text
+    
+    with engine.begin() as conn:
+        # Check if months column exists in financial_periods
+        result = conn.execute(sql_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='financial_periods' AND column_name='months'"
+        )).fetchone()
+        
+        if not result:
+            logger.info("Adding 'months' column to financial_periods...")
+            conn.execute(sql_text(
+                "ALTER TABLE financial_periods ADD COLUMN months JSON"
+            ))
+            logger.info("✅ Added months column")
+        
+        # Check if monthly_watch_breakdown exists in teacher_payments
+        result = conn.execute(sql_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='teacher_payments' AND column_name='monthly_watch_breakdown'"
+        )).fetchone()
+        
+        if not result:
+            logger.info("Adding 'monthly_watch_breakdown' column to teacher_payments...")
+            conn.execute(sql_text(
+                "ALTER TABLE teacher_payments ADD COLUMN monthly_watch_breakdown JSON"
+            ))
+            logger.info("✅ Added monthly_watch_breakdown column")
+    
+    logger.info("✅ Financial table migrations complete")
+except Exception as e:
+    logger.error(f"❌ Migration error (non-fatal): {e}")
+
 # Create FastAPI app
 app = FastAPI(title="Elkheta Teacher Performance Dashboard")
 
