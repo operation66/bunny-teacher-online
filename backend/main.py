@@ -1252,6 +1252,88 @@ def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db))
         result.append(TeacherAssignmentWithDetails(**assignment_dict))
     return result
     
+def _stage_to_dict(obj) -> dict:
+    return {
+        "id":            obj.id,
+        "code":          obj.code,
+        "name":          obj.name,
+        "display_order": obj.display_order,
+        "created_at":    obj.created_at,
+    }
+
+
+def _section_to_dict(obj) -> dict:
+    return {
+        "id":         obj.id,
+        "stage_id":   obj.stage_id,
+        "code":       obj.code,
+        "name":       obj.name,
+        "created_at": obj.created_at,
+    }
+
+
+def _section_revenue_with_details_to_dict(obj, stage_name, section_name) -> dict:
+    return {
+        "id":                obj.id,
+        "period_id":         obj.period_id,
+        "stage_id":          obj.stage_id,
+        "section_id":        obj.section_id,
+        "total_orders":      obj.total_orders,
+        "total_revenue_egp": obj.total_revenue_egp,
+        "created_at":        obj.created_at,
+        "updated_at":        obj.updated_at,
+        "stage_name":        stage_name,
+        "section_name":      section_name,
+    }
+
+
+def _assignment_with_details_to_dict(obj, stage_name, section_name, subject_name, subject_is_common) -> dict:
+    return {
+        "id":                 obj.id,
+        "library_id":         obj.library_id,
+        "library_name":       obj.library_name,
+        "stage_id":           obj.stage_id,
+        "section_id":         obj.section_id,
+        "subject_id":         obj.subject_id,
+        "tax_rate":           obj.tax_rate,
+        "revenue_percentage": obj.revenue_percentage,
+        "created_at":         obj.created_at,
+        "updated_at":         obj.updated_at,
+        "stage_name":         stage_name,
+        "section_name":       section_name,
+        "subject_name":       subject_name,
+        "subject_is_common":  subject_is_common,
+    }
+
+
+def _payment_with_details_to_dict(obj, stage_name, section_name, subject_name, subject_is_common) -> dict:
+    return {
+        "id":                       obj.id,
+        "period_id":                obj.period_id,
+        "assignment_id":            obj.assignment_id,
+        "library_id":               obj.library_id,
+        "library_name":             obj.library_name,
+        "stage_id":                 obj.stage_id,
+        "section_id":               obj.section_id,
+        "subject_id":               obj.subject_id,
+        "total_watch_time_seconds": obj.total_watch_time_seconds,
+        "watch_time_percentage":    obj.watch_time_percentage,
+        "section_total_orders":     obj.section_total_orders,
+        "section_order_percentage": obj.section_order_percentage,
+        "base_revenue":             obj.base_revenue,
+        "revenue_percentage_applied": obj.revenue_percentage_applied,
+        "calculated_revenue":       obj.calculated_revenue,
+        "tax_rate_applied":         obj.tax_rate_applied,
+        "tax_amount":               obj.tax_amount,
+        "final_payment":            obj.final_payment,
+        "created_at":               obj.created_at,
+        "stage_name":               stage_name,
+        "section_name":             section_name,
+        "subject_name":             subject_name,
+        "subject_is_common":        subject_is_common,
+    }
+
+
 def _period_to_dict(obj) -> dict:
     """Serialize a FinancialPeriod ORM object to a plain dict."""
     return {
@@ -1691,52 +1773,89 @@ def create_or_update_section_revenue(
 
 @app.get("/financials/{period_id}/{stage_id}", response_model=FinancialData)
 def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_db)):
-    period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
-    if not period:
-        raise HTTPException(status_code=404, detail="Period not found")
-    stage = db.query(Stage).filter(Stage.id == stage_id).first()
-    if not stage:
-        raise HTTPException(status_code=404, detail="Stage not found")
+    try:
+        period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+        if not period:
+            raise HTTPException(status_code=404, detail="Period not found")
 
-    sections = db.query(Section).filter(Section.stage_id == stage_id).all()
+        stage = db.query(Stage).filter(Stage.id == stage_id).first()
+        if not stage:
+            raise HTTPException(status_code=404, detail="Stage not found")
 
-    section_revenues = db.query(SectionRevenue).filter(
-        SectionRevenue.period_id == period_id, SectionRevenue.stage_id == stage_id).all()
-    section_revenues_with_details = []
-    for rev in section_revenues:
-        section = db.query(Section).filter(Section.id == rev.section_id).first()
-        rev_dict = {**rev.__dict__, "stage_name": stage.name, "section_name": section.name if section else None}
-        section_revenues_with_details.append(SectionRevenueWithDetails(**rev_dict))
+        sections = db.query(Section).filter(Section.stage_id == stage_id).all()
 
-    assignments = db.query(TeacherAssignment).filter(TeacherAssignment.stage_id == stage_id).all()
-    assignments_with_details = []
-    for assignment in assignments:
-        section = db.query(Section).filter(Section.id == assignment.section_id).first() if assignment.section_id else None
-        subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
-        assignment_dict = {**assignment.__dict__, "stage_name": stage.name,
-                           "section_name": section.name if section else None,
-                           "subject_name": subject.name if subject else None,
-                           "subject_is_common": subject.is_common if subject else None}
-        assignments_with_details.append(TeacherAssignmentWithDetails(**assignment_dict))
+        # Build section lookup for names
+        section_map = {s.id: s for s in sections}
 
-    payments = db.query(TeacherPayment).filter(
-        TeacherPayment.period_id == period_id, TeacherPayment.stage_id == stage_id).all()
-    payments_with_details = []
-    for payment in payments:
-        section = db.query(Section).filter(Section.id == payment.section_id).first()
-        subject = db.query(Subject).filter(Subject.id == payment.subject_id).first()
-        payment_dict = {**payment.__dict__, "stage_name": stage.name,
-                        "section_name": section.name if section else None,
-                        "subject_name": subject.name if subject else None,
-                        "subject_is_common": subject.is_common if subject else None}
-        payments_with_details.append(TeacherPaymentWithDetails(**payment_dict))
+        # Section revenues
+        section_revenues_raw = db.query(SectionRevenue).filter(
+            SectionRevenue.period_id == period_id,
+            SectionRevenue.stage_id  == stage_id,
+        ).all()
+        section_revenues_dicts = [
+            _section_revenue_with_details_to_dict(
+                rev,
+                stage_name=stage.name,
+                section_name=section_map[rev.section_id].name if rev.section_id in section_map else None,
+            )
+            for rev in section_revenues_raw
+        ]
 
-    return FinancialData(
-        period=period, stage=stage, sections=sections,
-        section_revenues=section_revenues_with_details,
-        teacher_assignments=assignments_with_details,
-        teacher_payments=payments_with_details
-    )
+        # Teacher assignments
+        assignments_raw = db.query(TeacherAssignment).filter(
+            TeacherAssignment.stage_id == stage_id
+        ).all()
+        subject_cache = {}
+        def get_subject(subject_id):
+            if subject_id not in subject_cache:
+                subject_cache[subject_id] = db.query(Subject).filter(Subject.id == subject_id).first()
+            return subject_cache[subject_id]
+
+        assignments_dicts = []
+        for a in assignments_raw:
+            sec = section_map.get(a.section_id) if a.section_id else None
+            subj = get_subject(a.subject_id)
+            assignments_dicts.append(_assignment_with_details_to_dict(
+                a,
+                stage_name=stage.name,
+                section_name=sec.name if sec else None,
+                subject_name=subj.name if subj else None,
+                subject_is_common=subj.is_common if subj else None,
+            ))
+
+        # Teacher payments
+        payments_raw = db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == period_id,
+            TeacherPayment.stage_id  == stage_id,
+        ).all()
+        payments_dicts = []
+        for p in payments_raw:
+            sec = section_map.get(p.section_id) if p.section_id else None
+            subj = get_subject(p.subject_id)
+            payments_dicts.append(_payment_with_details_to_dict(
+                p,
+                stage_name=stage.name,
+                section_name=sec.name if sec else None,
+                subject_name=subj.name if subj else None,
+                subject_is_common=subj.is_common if subj else None,
+            ))
+
+        # Build FinancialData from plain dicts — no ORM objects passed in
+        return FinancialData(
+            period=_period_to_dict(period),
+            stage=_stage_to_dict(stage),
+            sections=[_section_to_dict(s) for s in sections],
+            section_revenues=[SectionRevenueWithDetails(**d) for d in section_revenues_dicts],
+            teacher_assignments=[TeacherAssignmentWithDetails(**d) for d in assignments_dicts],
+            teacher_payments=[TeacherPaymentWithDetails(**d) for d in payments_dicts],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_financial_data: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to load financial data: {str(e)}")
 
 
 @app.post("/calculate-payments/{period_id}/{stage_id}", response_model=CalculatePaymentsResponse)
@@ -1745,32 +1864,52 @@ async def calculate_payments(period_id: int, stage_id: int, db: Session = Depend
         period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
         if not period:
             raise HTTPException(status_code=404, detail="Period not found")
+
         stage = db.query(Stage).filter(Stage.id == stage_id).first()
         if not stage:
             raise HTTPException(status_code=404, detail="Stage not found")
 
         section_revenues = db.query(SectionRevenue).filter(
-            SectionRevenue.period_id == period_id, SectionRevenue.stage_id == stage_id).all()
+            SectionRevenue.period_id == period_id,
+            SectionRevenue.stage_id  == stage_id,
+        ).all()
         if not section_revenues:
             raise HTTPException(status_code=400, detail="No revenue data found. Please add revenue data first.")
 
-        sections_data = [{"section_id": rev.section_id, "total_orders": rev.total_orders} for rev in section_revenues]
+        sections_data = [{"section_id": rev.section_id, "total_orders": rev.total_orders}
+                         for rev in section_revenues]
         section_order_percentages = calculate_section_order_percentages(sections_data)
 
-        assignments = db.query(TeacherAssignment).filter(TeacherAssignment.stage_id == stage_id).all()
+        assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.stage_id == stage_id
+        ).all()
         if not assignments:
             raise HTTPException(status_code=400, detail="No teacher assignments found. Please assign teachers first.")
 
+        # Delete old payments for this period+stage
         db.query(TeacherPayment).filter(
-            TeacherPayment.period_id == period_id, TeacherPayment.stage_id == stage_id).delete()
+            TeacherPayment.period_id == period_id,
+            TeacherPayment.stage_id  == stage_id,
+        ).delete()
 
+        # Build watch-time map
         watch_time_map = {}
         for assignment in assignments:
             stats = db.query(models.LibraryHistoricalStats).filter(
                 models.LibraryHistoricalStats.library_id == assignment.library_id,
-                models.LibraryHistoricalStats.year == period.year
+                models.LibraryHistoricalStats.year       == period.year,
             ).all()
             watch_time_map[assignment.library_id] = sum(s.total_watch_time_seconds for s in stats)
+
+        # Subject cache
+        subject_cache = {}
+        def get_subject(subject_id):
+            if subject_id not in subject_cache:
+                subject_cache[subject_id] = db.query(Subject).filter(Subject.id == subject_id).first()
+            return subject_cache[subject_id]
+
+        # Section lookup
+        section_map = {s.id: s for s in db.query(Section).filter(Section.stage_id == stage_id).all()}
 
         payments_created = []
         total_payment_sum = 0.0
@@ -1778,15 +1917,17 @@ async def calculate_payments(period_id: int, stage_id: int, db: Session = Depend
         for revenue in section_revenues:
             section_assignments = [
                 a for a in assignments
-                if (a.section_id == revenue.section_id) or (a.section_id is None)
+                if a.section_id == revenue.section_id or a.section_id is None
             ]
-            total_section_watch_time = sum(watch_time_map.get(a.library_id, 0) for a in section_assignments)
+            total_section_watch_time = sum(
+                watch_time_map.get(a.library_id, 0) for a in section_assignments
+            )
 
             for assignment in section_assignments:
                 teacher_watch_time = watch_time_map.get(assignment.library_id, 0)
-                subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
+                subj = get_subject(assignment.subject_id)
                 section_order_pct = 1.0
-                if subject and subject.is_common:
+                if subj and subj.is_common:
                     section_order_pct = section_order_percentages.get(revenue.section_id, 1.0)
 
                 payment_calc = calculate_teacher_payment(
@@ -1795,23 +1936,27 @@ async def calculate_payments(period_id: int, stage_id: int, db: Session = Depend
                     total_section_watch_time_seconds=total_section_watch_time,
                     revenue_percentage=assignment.revenue_percentage,
                     tax_rate=assignment.tax_rate,
-                    section_order_percentage=section_order_pct
+                    section_order_percentage=section_order_pct,
                 )
 
                 payment = TeacherPayment(
-                    period_id=period_id, assignment_id=assignment.id,
-                    library_id=assignment.library_id, library_name=assignment.library_name,
-                    stage_id=stage_id, section_id=revenue.section_id, subject_id=assignment.subject_id,
+                    period_id=period_id,
+                    assignment_id=assignment.id,
+                    library_id=assignment.library_id,
+                    library_name=assignment.library_name,
+                    stage_id=stage_id,
+                    section_id=revenue.section_id,
+                    subject_id=assignment.subject_id,
                     total_watch_time_seconds=teacher_watch_time,
-                    watch_time_percentage=payment_calc['watch_time_percentage'],
+                    watch_time_percentage=payment_calc["watch_time_percentage"],
                     section_total_orders=revenue.total_orders,
-                    section_order_percentage=payment_calc['section_order_percentage'],
-                    base_revenue=payment_calc['base_revenue'],
-                    revenue_percentage_applied=payment_calc['revenue_percentage_applied'],
-                    calculated_revenue=payment_calc['calculated_revenue'],
-                    tax_rate_applied=payment_calc['tax_rate_applied'],
-                    tax_amount=payment_calc['tax_amount'],
-                    final_payment=payment_calc['final_payment']
+                    section_order_percentage=payment_calc["section_order_percentage"],
+                    base_revenue=payment_calc["base_revenue"],
+                    revenue_percentage_applied=payment_calc["revenue_percentage_applied"],
+                    calculated_revenue=payment_calc["calculated_revenue"],
+                    tax_rate_applied=payment_calc["tax_rate_applied"],
+                    tax_amount=payment_calc["tax_amount"],
+                    final_payment=payment_calc["final_payment"],
                 )
                 db.add(payment)
                 payments_created.append(payment)
@@ -1819,31 +1964,37 @@ async def calculate_payments(period_id: int, stage_id: int, db: Session = Depend
 
         db.commit()
 
+        # Refresh and serialize to dicts
         payments_with_details = []
         for payment in payments_created:
             db.refresh(payment)
-            section = db.query(Section).filter(Section.id == payment.section_id).first()
-            subject = db.query(Subject).filter(Subject.id == payment.subject_id).first()
-            payment_dict = {**payment.__dict__, "stage_name": stage.name,
-                            "section_name": section.name if section else None,
-                            "subject_name": subject.name if subject else None,
-                            "subject_is_common": subject.is_common if subject else None}
-            payments_with_details.append(TeacherPaymentWithDetails(**payment_dict))
+            sec  = section_map.get(payment.section_id)
+            subj = get_subject(payment.subject_id)
+            payments_with_details.append(TeacherPaymentWithDetails(
+                **_payment_with_details_to_dict(
+                    payment,
+                    stage_name=stage.name,
+                    section_name=sec.name if sec else None,
+                    subject_name=subj.name if subj else None,
+                    subject_is_common=subj.is_common if subj else None,
+                )
+            ))
 
         return CalculatePaymentsResponse(
             success=True,
             message=f"Successfully calculated payments for {len(payments_created)} teachers",
             payments_calculated=len(payments_created),
-            total_payment=total_payment_sum, payments=payments_with_details
+            total_payment=total_payment_sum,
+            payments=payments_with_details,
         )
 
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Payment calculation error: {str(e)}")
+        logger.error(f"Payment calculation error: {e}")
+        import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
 def get_teacher_payments(period_id: int, db: Session = Depends(get_db)):
