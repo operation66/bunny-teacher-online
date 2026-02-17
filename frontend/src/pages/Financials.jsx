@@ -8,7 +8,7 @@ import financialApi from '../services/financial_api';
 import {
   DollarSign, Plus, Calculator, TrendingUp, Users, Trash2,
   ChevronDown, ChevronUp, AlertTriangle, CheckCircle, XCircle,
-  ArrowUpDown, ArrowUp, ArrowDown, Eye, RefreshCw
+  ArrowUpDown, ArrowUp, ArrowDown, Eye, RefreshCw, Clock
 } from 'lucide-react';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -85,6 +85,11 @@ const Financials = () => {
   const [libraryPreview, setLibraryPreview]     = useState(null);
   const [excludedLibs, setExcludedLibs]         = useState(new Set());
   const [loadingPreview, setLoadingPreview]      = useState(false);
+
+  // ── FEATURE 1: Select state for modal ────────────────────────────────────
+  // selectedModalLibs tracks which libraries have their checkbox ticked in the modal.
+  // This is separate from excludedLibs (reject/approve toggle).
+  const [selectedModalLibs, setSelectedModalLibs] = useState(new Set());
 
   // Table filters & sorting
   const [subjectFilter, setSubjectFilter] = useState('all');
@@ -215,29 +220,81 @@ const Financials = () => {
     if(!selectedPeriod||!selectedStage) return;
     setLoadingPreview(true);
     setShowLibraryModal(true);
+    setSelectedModalLibs(new Set()); // reset checkbox selection on open
     try {
       const data = await financialApi.getLibrariesPreview(selectedPeriod, selectedStage);
       setLibraryPreview(data);
-      setExcludedLibs(new Set());
+      // ── FEATURE 1 FIX: Restore persisted exclusions when modal opens ──────
+      // Do NOT wipe excludedLibs here — restore from localStorage so user's
+      // previously rejected libraries are preserved across modal open/close.
+      try {
+        const saved = localStorage.getItem(EXCLUDED_KEY(selectedPeriod, selectedStage));
+        if(saved) setExcludedLibs(new Set(JSON.parse(saved)));
+        // else leave current excludedLibs untouched (already loaded on period/stage change)
+      } catch {}
     } catch(e){
       showMsg('Error loading preview: '+(e.response?.data?.detail||e.message),'error');
       setShowLibraryModal(false);
     } finally { setLoadingPreview(false); }
   };
 
+  // ── FEATURE 1: Persist exclusion toggle ──────────────────────────────────
+  const persistExcluded = (newSet) => {
+    try {
+      localStorage.setItem(
+        EXCLUDED_KEY(selectedPeriod, selectedStage),
+        JSON.stringify(Array.from(newSet))
+      );
+    } catch {}
+  };
+
   const toggleLibraryExclude = (libId) => {
     setExcludedLibs(prev=>{
-      const s=new Set(prev);
-      s.has(libId)?s.delete(libId):s.add(libId);
-      // Persist per period+stage
-      try {
-        localStorage.setItem(
-          EXCLUDED_KEY(selectedPeriod, selectedStage),
-          JSON.stringify(Array.from(s))
-        );
-      } catch {}
+      const s = new Set(prev);
+      s.has(libId) ? s.delete(libId) : s.add(libId);
+      persistExcluded(s);
       return s;
     });
+  };
+
+  // ── FEATURE 1: Bulk reject/restore selected libraries ────────────────────
+  const rejectSelected = () => {
+    setExcludedLibs(prev=>{
+      const s = new Set(prev);
+      selectedModalLibs.forEach(id => s.add(id));
+      persistExcluded(s);
+      return s;
+    });
+    setSelectedModalLibs(new Set());
+  };
+
+  const restoreSelected = () => {
+    setExcludedLibs(prev=>{
+      const s = new Set(prev);
+      selectedModalLibs.forEach(id => s.delete(id));
+      persistExcluded(s);
+      return s;
+    });
+    setSelectedModalLibs(new Set());
+  };
+
+  // Toggle a single checkbox in the modal
+  const toggleModalSelect = (libId) => {
+    setSelectedModalLibs(prev=>{
+      const s = new Set(prev);
+      s.has(libId) ? s.delete(libId) : s.add(libId);
+      return s;
+    });
+  };
+
+  // Select all / deselect all
+  const toggleSelectAll = () => {
+    const allIds = (libraryPreview?.libraries||[]).map(l=>l.library_id);
+    if(selectedModalLibs.size === allIds.length) {
+      setSelectedModalLibs(new Set());
+    } else {
+      setSelectedModalLibs(new Set(allIds));
+    }
   };
 
   // ── Calculate ─────────────────────────────────────────────────────────────
@@ -507,7 +564,9 @@ const Financials = () => {
     );
   };
 
-  // ── Render: Section payments table ────────────────────────────────────────
+  // ── FEATURE 3 & 4: Render section payments table ──────────────────────────
+  // Added: "before tax" sub-line under total payment in totals row
+  // Added: total watch time column at end of totals row
   const renderPaymentsTable = (sectionPayments) => {
     const filtered = subjectFilter==='all'
       ? sectionPayments
@@ -523,6 +582,11 @@ const Financials = () => {
 
     const thClass = "text-xs font-semibold text-gray-600 px-3 py-2 cursor-pointer select-none whitespace-nowrap";
     const tdClass = "px-3 py-2 text-sm";
+
+    // ── FEATURE 4: Compute section totals ────────────────────────────────
+    const totalFinalPayment    = sorted.reduce((s,p) => s + p.final_payment, 0);
+    const totalBeforeTax       = sorted.reduce((s,p) => s + (p.calculated_revenue || 0), 0);
+    const totalWatchTimeSecs   = sorted.reduce((s,p) => s + (p.total_watch_time_seconds || 0), 0);
 
     return (
       <div className="overflow-x-auto rounded-lg border">
@@ -582,10 +646,35 @@ const Financials = () => {
                 </td>
               </tr>
             ))}
+
+            {/* ── FEATURE 3 & 4: Totals row ─────────────────────────────── */}
             <tr className="border-t-2 border-gray-300 bg-gray-100 font-bold">
-              <td colSpan={6} className="px-3 py-2 text-right text-sm text-gray-700">Section Total:</td>
-              <td className="px-3 py-2 text-right text-green-700 font-bold">
-                {fmtCurrency(sorted.reduce((s,p)=>s+p.final_payment,0))}
+              {/* Label spanning: Teacher, Subject, Watch%, Rev%, Tax% = 5 cols */}
+              <td colSpan={2} className="px-3 py-2 text-right text-sm text-gray-700">
+                Section Total:
+              </td>
+
+              {/* FEATURE 4: Total watch time for the section */}
+              <td className="px-3 py-2 text-right">
+                <div className="font-bold text-blue-700 font-mono flex items-center justify-end gap-1">
+                  <Clock className="w-3.5 h-3.5 text-blue-500"/>
+                  {fmtMinutes(totalWatchTimeSecs)} min
+                </div>
+              </td>
+
+              {/* Watch %, Rev %, Tax % — empty spacers */}
+              <td className="px-3 py-2"/>
+              <td className="px-3 py-2"/>
+              <td className="px-3 py-2"/>
+
+              {/* FEATURE 3: Payment total + before-tax sub-line */}
+              <td className="px-3 py-2 text-right">
+                <div className="font-bold text-green-700 text-base">
+                  {fmtCurrency(totalFinalPayment)}
+                </div>
+                <div className="text-xs text-gray-500 font-normal mt-0.5">
+                  Before tax: {fmtCurrency(totalBeforeTax)}
+                </div>
               </td>
             </tr>
           </tbody>
@@ -594,7 +683,7 @@ const Financials = () => {
     );
   };
 
-  // ── Render: Section cards ─────────────────────────────────────────────────
+  // ── FEATURE 2: Render section cards with total watch time in header ───────
   const renderSections = () => {
     if(!financialData) return null;
     const {sections, teacher_payments} = financialData;
@@ -628,6 +717,9 @@ const Financials = () => {
           const secTotal      = secPayments.reduce((s,p)=>s+p.final_payment,0);
           const secRevSaved   = financialData.section_revenues.find(r=>r.section_id===section.id);
 
+          // ── FEATURE 2: Total watch time for this section ─────────────────
+          const secTotalWatchSecs = secPayments.reduce((s,p)=>s+(p.total_watch_time_seconds||0),0);
+
           return (
             <Card key={section.id} className="overflow-hidden">
               {/* Section header — always visible, shows totals */}
@@ -645,18 +737,27 @@ const Financials = () => {
                   </div>
                   <div>
                     <div className="font-semibold text-gray-900">{section.name}</div>
-                    <div className="flex gap-4 text-sm text-gray-500 mt-0.5">
+                    {/* ── FEATURE 2: Show total watch time alongside other stats ── */}
+                    <div className="flex flex-wrap gap-3 text-sm text-gray-500 mt-0.5 items-center">
                       {secRevSaved && (
                         <>
                           <span>{secRevSaved.total_orders.toLocaleString()} orders</span>
-                          <span>·</span>
+                          <span className="text-gray-300">·</span>
                           <span>{fmtCurrency(secRevSaved.total_revenue_egp)} EGP revenue</span>
                         </>
                       )}
                       {secPayments.length>0 && (
                         <>
-                          <span>·</span>
-                          <span className="text-green-600 font-semibold">{fmtCurrency(secTotal)} EGP total payments</span>
+                          <span className="text-gray-300">·</span>
+                          <span className="text-green-600 font-semibold">
+                            {fmtCurrency(secTotal)} EGP payments
+                          </span>
+                          <span className="text-gray-300">·</span>
+                          {/* Watch time badge */}
+                          <span className="flex items-center gap-1 text-blue-600 font-semibold">
+                            <Clock className="w-3.5 h-3.5"/>
+                            {fmtMinutes(secTotalWatchSecs)} min watch
+                          </span>
                         </>
                       )}
                     </div>
@@ -753,6 +854,11 @@ const Financials = () => {
               <Button variant="outline" onClick={openLibraryPreview}
                 className="border-blue-400 text-blue-700 hover:bg-blue-100">
                 <Eye className="w-4 h-4 mr-1"/>Review Libraries
+                {excludedLibs.size>0 && (
+                  <span className="ml-1.5 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                    {excludedLibs.size} excluded
+                  </span>
+                )}
               </Button>
               <Button onClick={handleCalculate} disabled={calculating}
                 className={`px-6 py-2 font-semibold text-white
@@ -769,14 +875,20 @@ const Financials = () => {
     );
   };
 
-  // ── Render: Library approval modal ────────────────────────────────────────
+  // ── FEATURE 1: Render library approval modal (with select + bulk actions) ─
   const renderLibraryModal = () => {
     if(!showLibraryModal) return null;
-    const periodMonths = libraryPreview?.period_months || [];
+    const periodMonths  = libraryPreview?.period_months || [];
+    const libraries     = libraryPreview?.libraries || [];
+    const allIds        = libraries.map(l=>l.library_id);
+    const allSelected   = allIds.length > 0 && selectedModalLibs.size === allIds.length;
+    const someSelected  = selectedModalLibs.size > 0;
+    const selectedAreAllExcluded = someSelected &&
+      Array.from(selectedModalLibs).every(id => excludedLibs.has(id));
 
     return (
       <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-6 overflow-y-auto">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b">
             <div>
@@ -805,17 +917,42 @@ const Financials = () => {
                 </div>
               )}
 
-              {/* Legend */}
-              <div className="px-6 pt-4 flex gap-4 text-xs text-gray-500">
-                <span className="flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3 text-green-500"/>Approved (included)
-                </span>
-                <span className="flex items-center gap-1">
-                  <XCircle className="w-3 h-3 text-red-500"/>Rejected (excluded)
-                </span>
-                <span className="flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3 text-orange-400"/>No analytics
-                </span>
+              {/* Legend + bulk action bar */}
+              <div className="px-6 pt-4 flex items-center justify-between flex-wrap gap-3">
+                <div className="flex gap-4 text-xs text-gray-500">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3 text-green-500"/>Approved (included)
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <XCircle className="w-3 h-3 text-red-500"/>Rejected (excluded)
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 text-orange-400"/>No analytics
+                  </span>
+                </div>
+
+                {/* ── FEATURE 1: Bulk action buttons ───────────────────── */}
+                {someSelected && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">{selectedModalLibs.size} selected</span>
+                    {/* Show "Reject Selected" if any selected are currently approved */}
+                    {!selectedAreAllExcluded && (
+                      <button
+                        onClick={rejectSelected}
+                        className="flex items-center gap-1.5 text-xs bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors">
+                        <XCircle className="w-3.5 h-3.5"/>Reject Selected
+                      </button>
+                    )}
+                    {/* Show "Restore Selected" if any selected are currently excluded */}
+                    {Array.from(selectedModalLibs).some(id=>excludedLibs.has(id)) && (
+                      <button
+                        onClick={restoreSelected}
+                        className="flex items-center gap-1.5 text-xs bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors">
+                        <CheckCircle className="w-3.5 h-3.5"/>Restore Selected
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Table */}
@@ -823,6 +960,16 @@ const Financials = () => {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 sticky top-0">
                     <tr>
+                      {/* ── FEATURE 1: Select all checkbox column ──────── */}
+                      <th className="px-3 py-2 w-10">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={toggleSelectAll}
+                          className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                          title={allSelected ? 'Deselect all' : 'Select all'}
+                        />
+                      </th>
                       <th className="text-left px-3 py-2 text-xs font-semibold text-gray-600">Status</th>
                       <th className="text-left px-3 py-2 text-xs font-semibold text-gray-600">Library</th>
                       <th className="text-left px-3 py-2 text-xs font-semibold text-gray-600">Subject</th>
@@ -836,20 +983,40 @@ const Financials = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {(libraryPreview?.libraries||[]).map(lib=>{
+                    {libraries.map(lib=>{
                       const rejected  = excludedLibs.has(lib.library_id);
                       const noData    = !lib.has_analytics;
+                      const isChecked = selectedModalLibs.has(lib.library_id);
                       return (
                         <tr key={`${lib.library_id}-${lib.section_name}`}
-                          className={`border-b ${rejected?'opacity-40 bg-red-50':noData?'bg-orange-50':''}`}>
+                          className={`border-b transition-colors
+                            ${isChecked ? 'bg-blue-50' : ''}
+                            ${rejected && !isChecked ? 'opacity-50 bg-red-50' : ''}
+                            ${noData && !rejected && !isChecked ? 'bg-orange-50' : ''}
+                            ${!rejected && !noData && !isChecked ? 'hover:bg-gray-50' : ''}`}>
+
+                          {/* ── FEATURE 1: Row checkbox ────────────────── */}
                           <td className="px-3 py-2">
-                            <button onClick={()=>toggleLibraryExclude(lib.library_id)}
-                              className="focus:outline-none">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={()=>toggleModalSelect(lib.library_id)}
+                              className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                            />
+                          </td>
+
+                          {/* Status toggle (approve / reject) */}
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={()=>toggleLibraryExclude(lib.library_id)}
+                              className="focus:outline-none"
+                              title={rejected ? 'Click to restore' : 'Click to reject'}>
                               {rejected
                                 ? <XCircle className="w-5 h-5 text-red-500"/>
                                 : <CheckCircle className="w-5 h-5 text-green-500"/>}
                             </button>
                           </td>
+
                           <td className="px-3 py-2">
                             <div className="font-medium">{lib.library_name}</div>
                             <div className="text-xs text-gray-400">ID: {lib.library_id}</div>
@@ -883,10 +1050,10 @@ const Financials = () => {
 
               {/* Footer */}
               <div className="px-6 py-4 border-t flex items-center justify-between bg-gray-50 rounded-b-xl">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 flex-wrap">
                   <div className="text-sm text-gray-600">
                     <span className="font-semibold text-green-700">
-                      {(libraryPreview?.libraries?.length||0) - excludedLibs.size} approved
+                      {libraries.length - excludedLibs.size} approved
                     </span>
                     {excludedLibs.size>0 &&
                       <span className="text-red-600 ml-3 font-semibold">{excludedLibs.size} rejected</span>}
