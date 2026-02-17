@@ -1978,9 +1978,274 @@ def get_libraries_preview(period_id: int, stage_id: int, db: Session = Depends(g
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/calculate-payments/{period_id}/{stage_id}", response_model=CalculatePaymentsResponse)
 async def calculate_payments(
+    period_id: int,
+    stage_id: int,
+    request: dict = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Correct payment calculation logic:
+
+    STEP 1 — Common subjects (is_common=True) calculated FIRST:
+      For each common library:
+        raw_wt = its total watch time for period months
+        For each section:
+          allocated_wt = raw_wt * (section_orders / total_all_orders)
+      This allocated_wt is what enters the section pool for that library.
+      Example: Arabic teacher raw_wt=1000, GEN_orders=1000, LANG_orders=3000
+        → GEN gets 250 allocated, LANG gets 750 allocated
+
+    STEP 2 — Build section watch time pool:
+      For each section:
+        pool = Σ allocated_wt (common libs) + Σ raw_wt (specific libs)
+
+    STEP 3 — Payment for each teacher in each section:
+      watch_pct = teacher_wt_in_section / section_pool
+      base_rev  = section_revenue * watch_pct
+      payment   = base_rev * revenue_percentage * (1 - tax_rate)
+    """
+    try:
+        excluded_ids = []
+        if request and isinstance(request, dict):
+            excluded_ids = request.get("excluded_library_ids", [])
+
+        period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+        if not period:
+            raise HTTPException(status_code=404, detail="Period not found")
+
+        stage = db.query(Stage).filter(Stage.id == stage_id).first()
+        if not stage:
+            raise HTTPException(status_code=404, detail="Stage not found")
+
+        period_months = period.months or []
+
+        section_revenues = db.query(SectionRevenue).filter(
+            SectionRevenue.period_id == period_id,
+            SectionRevenue.stage_id  == stage_id,
+        ).all()
+        if not section_revenues:
+            raise HTTPException(status_code=400, detail="No revenue data found. Please add revenue data first.")
+
+        assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.stage_id == stage_id
+        ).all()
+        if excluded_ids:
+            assignments = [a for a in assignments if a.library_id not in excluded_ids]
+        if not assignments:
+            raise HTTPException(status_code=400, detail="No teacher assignments found after exclusions.")
+
+        # Delete old payments
+        db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == period_id,
+            TeacherPayment.stage_id  == stage_id,
+        ).delete()
+
+        # ── Build raw watch-time map + monthly breakdown ──────────────────────
+        watch_time_map = {}  # library_id → total seconds for period months
+        monthly_map    = {}  # library_id → {month_str: seconds}
+
+        for a in assignments:
+            lib_id = a.library_id
+            if lib_id in watch_time_map:
+                continue
+
+            breakdown = {}
+            total = 0
+
+            if period_months:
+                for month_str in period_months:
+                    try:
+                        yr, mo = map(int, month_str.split("-"))
+                    except ValueError:
+                        continue
+                    stat = db.query(models.LibraryHistoricalStats).filter(
+                        models.LibraryHistoricalStats.library_id == lib_id,
+                        models.LibraryHistoricalStats.year  == yr,
+                        models.LibraryHistoricalStats.month == mo,
+                    ).first()
+                    secs = stat.total_watch_time_seconds if stat else 0
+                    breakdown[month_str] = secs
+                    total += secs
+            else:
+                # Fallback: all stats for the period year
+                stats = db.query(models.LibraryHistoricalStats).filter(
+                    models.LibraryHistoricalStats.library_id == lib_id,
+                    models.LibraryHistoricalStats.year       == period.year,
+                ).all()
+                for stat in stats:
+                    key  = f"{stat.year}-{stat.month:02d}"
+                    breakdown[key] = stat.total_watch_time_seconds
+                    total += stat.total_watch_time_seconds
+
+            watch_time_map[lib_id] = total
+            monthly_map[lib_id]    = breakdown
+
+        # ── Caches ───────────────────────────────────────────────────────────
+        subject_cache = {}
+        def get_subject(sid):
+            if sid not in subject_cache:
+                subject_cache[sid] = db.query(Subject).filter(Subject.id == sid).first()
+            return subject_cache[sid]
+
+        section_map = {s.id: s for s in db.query(Section).filter(Section.stage_id == stage_id).all()}
+
+        # ── Orders totals ─────────────────────────────────────────────────────
+        total_all_orders = sum(rev.total_orders for rev in section_revenues) or 1
+        # section_id → orders for that section
+        orders_by_section = {rev.section_id: rev.total_orders for rev in section_revenues}
+
+        # ── STEP 1: Compute allocated watch time per section for common libs ──
+        # Each common assignment belongs to ONE section (auto-match creates one per section).
+        # For that assignment's section: allocated_wt = raw_wt * (section_orders / total_orders)
+        # This is the "virtual" split — the library's total watch time distributed proportionally.
+        allocated_wt = {rev.section_id: {} for rev in section_revenues}
+
+        for a in assignments:
+            subj = get_subject(a.subject_id)
+            if not (subj and subj.is_common):
+                continue
+            if a.section_id not in allocated_wt:
+                continue  # assignment belongs to a section not in this period's revenues — skip
+            raw_wt = watch_time_map.get(a.library_id, 0)
+            ratio  = orders_by_section.get(a.section_id, 0) / total_all_orders
+            alloc  = raw_wt * ratio
+            key = (a.library_id, a.subject_id)
+            allocated_wt[a.section_id][key] = alloc
+            logger.info(f"Common lib {a.library_id} subj {a.subject_id} → sec {a.section_id}: {alloc:.0f}s (ratio={ratio:.3f})")
+
+        # ── STEP 2: Build section watch-time pools ────────────────────────────
+        # pool[section_id] = Σ allocated_wt (common) + Σ raw_wt (specific)
+        section_pool = {}
+        for rev in section_revenues:
+            sec_id = rev.section_id
+            # Common libs — use allocated amounts
+            common_total = sum(allocated_wt[sec_id].values())
+            # Specific libs — assignments where section_id matches AND not common
+            specific_total = sum(
+                watch_time_map.get(a.library_id, 0)
+                for a in assignments
+                if a.section_id == sec_id and not (get_subject(a.subject_id) and get_subject(a.subject_id).is_common)
+            )
+            section_pool[sec_id] = common_total + specific_total
+            logger.info(f"Section {sec_id} pool: common={common_total:.0f}s specific={specific_total:.0f}s total={section_pool[sec_id]:.0f}s")
+
+        # ── STEP 3: Create payment records ────────────────────────────────────
+        payments_created  = []
+        total_payment_sum = 0.0
+
+        for rev in section_revenues:
+            sec_id      = rev.section_id
+            sec_revenue = rev.total_revenue_egp
+            sec_orders  = rev.total_orders
+            pool        = section_pool.get(sec_id, 0)
+            ord_frac    = orders_by_section[sec_id] / total_all_orders
+
+            # -- Common assignments for this section ONLY
+            for a in assignments:
+                if a.section_id != sec_id:   # ← FIX: only the assignment that belongs to this section
+                    continue
+                subj = get_subject(a.subject_id)
+                if not (subj and subj.is_common):
+                    continue
+                key        = (a.library_id, a.subject_id)
+                teacher_wt = allocated_wt[sec_id].get(key, 0)
+                wt_pct     = (teacher_wt / pool) if pool > 0 else 0.0
+
+                base_rev = sec_revenue * wt_pct
+                calc_rev = base_rev * a.revenue_percentage
+                tax_amt  = calc_rev * a.tax_rate
+                final    = calc_rev - tax_amt
+
+                payment = TeacherPayment(
+                    period_id=period_id, assignment_id=a.id,
+                    library_id=a.library_id, library_name=a.library_name,
+                    stage_id=stage_id, section_id=sec_id, subject_id=a.subject_id,
+                    total_watch_time_seconds=int(teacher_wt),
+                    watch_time_percentage=wt_pct,
+                    monthly_watch_breakdown=monthly_map.get(a.library_id, {}),
+                    section_total_orders=sec_orders,
+                    section_order_percentage=ord_frac,
+                    base_revenue=base_rev,
+                    revenue_percentage_applied=a.revenue_percentage,
+                    calculated_revenue=calc_rev,
+                    tax_rate_applied=a.tax_rate,
+                    tax_amount=tax_amt,
+                    final_payment=final,
+                )
+                db.add(payment)
+                payments_created.append(payment)
+                total_payment_sum += final
+
+            # -- Specific assignments for this section
+            for a in assignments:
+                if a.section_id != sec_id:
+                    continue
+                subj = get_subject(a.subject_id)
+                if subj and subj.is_common:
+                    continue  # already handled above
+                teacher_wt = watch_time_map.get(a.library_id, 0)
+                wt_pct     = (teacher_wt / pool) if pool > 0 else 0.0
+
+                base_rev = sec_revenue * wt_pct
+                calc_rev = base_rev * a.revenue_percentage
+                tax_amt  = calc_rev * a.tax_rate
+                final    = calc_rev - tax_amt
+
+                payment = TeacherPayment(
+                    period_id=period_id, assignment_id=a.id,
+                    library_id=a.library_id, library_name=a.library_name,
+                    stage_id=stage_id, section_id=sec_id, subject_id=a.subject_id,
+                    total_watch_time_seconds=teacher_wt,
+                    watch_time_percentage=wt_pct,
+                    monthly_watch_breakdown=monthly_map.get(a.library_id, {}),
+                    section_total_orders=sec_orders,
+                    section_order_percentage=ord_frac,
+                    base_revenue=base_rev,
+                    revenue_percentage_applied=a.revenue_percentage,
+                    calculated_revenue=calc_rev,
+                    tax_rate_applied=a.tax_rate,
+                    tax_amount=tax_amt,
+                    final_payment=final,
+                )
+                db.add(payment)
+                payments_created.append(payment)
+                total_payment_sum += final
+
+        db.commit()
+
+        # Serialize
+        payments_with_details = []
+        for payment in payments_created:
+            db.refresh(payment)
+            sec  = section_map.get(payment.section_id)
+            subj = get_subject(payment.subject_id)
+            payments_with_details.append(TeacherPaymentWithDetails(
+                **_payment_with_details_to_dict(
+                    payment,
+                    stage_name=stage.name,
+                    section_name=sec.name if sec else None,
+                    subject_name=subj.name if subj else None,
+                    subject_is_common=subj.is_common if subj else None,
+                )
+            ))
+
+        return CalculatePaymentsResponse(
+            success=True,
+            message=f"Successfully calculated payments for {len(payments_created)} teachers",
+            payments_calculated=len(payments_created),
+            total_payment=total_payment_sum,
+            payments=payments_with_details,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Payment calculation error: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
     period_id: int,
     stage_id: int,
     request: dict = None,
