@@ -38,7 +38,7 @@ class Section(SectionBase):
     id: int
     created_at: Optional[datetime] = None
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # ── SUBJECT ───────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ class Subject(SubjectBase):
     id: int
     created_at: Optional[datetime] = None
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # ── TEACHER ASSIGNMENT ────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ class TeacherAssignment(TeacherAssignmentBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class TeacherAssignmentWithDetails(TeacherAssignment):
     stage_name: Optional[str] = None
@@ -128,7 +128,7 @@ class FinancialPeriod(FinancialPeriodBase):
     id: int
     created_at: Optional[datetime] = None
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 # ── SECTION REVENUE ───────────────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ class SectionRevenue(SectionRevenueBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class SectionRevenueWithDetails(SectionRevenue):
     stage_name: Optional[str] = None
@@ -182,7 +182,7 @@ class TeacherPayment(BaseModel):
     final_payment: float
     created_at: Optional[datetime] = None
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class TeacherPaymentWithDetails(TeacherPayment):
     stage_name: Optional[str] = None
