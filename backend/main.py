@@ -3,10 +3,10 @@ from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
-import hashlib
 import io
 import random
 import logging
+from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import os
