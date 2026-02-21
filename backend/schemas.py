@@ -78,6 +78,30 @@ class LoginResponse(BaseModel):
     user_id: int
     email: str
     allowed_pages: List[str]
+# Bunny.net Library schema
+class BunnyLibrary(BaseModel):
+    id: int
+    name: str
+    video_views: int
+    total_watch_time_seconds: int
+
+# Upsert Teachers from Bunny Libraries
+class UpsertResult(BaseModel):
+    bunny_library_id: int
+    name: str
+    action: str  # created, updated, unchanged, error
+    success: bool
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+class UpsertTeachersResponse(BaseModel):
+    success: bool
+    total_libraries: int
+    created: int
+    updated: int
+    unchanged: int
+    failed: int
+    results: List[UpsertResult]
 
 # Monthly Stats schema
 class MonthlyStats(BaseModel):
