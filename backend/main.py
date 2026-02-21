@@ -432,7 +432,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user: model
 
 
 @app.post("/auth/login", response_model=schemas.LoginResponse)
-def login(req: schemas.LoginRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == req.email).first()
     if not user or not user.is_active or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
