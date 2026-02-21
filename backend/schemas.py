@@ -78,6 +78,9 @@ class LoginResponse(BaseModel):
     user_id: int
     email: str
     allowed_pages: List[str]
+    access_token: str
+    token_type: str
+
 # Bunny.net Library schema
 class BunnyLibrary(BaseModel):
     id: int
