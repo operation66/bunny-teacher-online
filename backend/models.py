@@ -146,5 +146,5 @@ class LibraryHistoricalStats(Base):
     
     # Unique constraint to prevent duplicate entries for same library/month/year
     __table_args__ = (
-        {'sqlite_autoincrement': True},
+        models_UniqueConstraint('library_id', 'month', 'year', name='uq_library_month_year'),
     )
