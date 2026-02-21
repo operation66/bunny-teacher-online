@@ -18,12 +18,21 @@ export const AuthProvider = ({ children }) => {
 
   const signIn = async (email, password) => {
     const data = await login(email, password);
+    
+    // Save the new JWT token to local storage
+    if (data.access_token) {
+      localStorage.setItem('token', data.access_token);
+    }
+    
     setUser({ id: data.user_id, email: data.email, allowedPages: data.allowed_pages });
     return data;
   };
 
-  const signOut = () => setUser(null);
-
+  const signOut = () => {
+    setUser(null);
+    localStorage.removeItem('token'); // Remove the token on logout
+  };
+  
   const value = useMemo(() => ({ user, signIn, signOut }), [user]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
