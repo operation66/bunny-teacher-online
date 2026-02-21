@@ -26,10 +26,6 @@ class Teacher(Base):
     
     # Relationships
     monthly_stats = relationship("MonthlyStats", back_populates="teacher")
-    quality_reports = relationship("QualityReport", back_populates="teacher")
-    student_reports = relationship("StudentReport", back_populates="teacher")
-    operations_reports = relationship("OperationsReport", back_populates="teacher")
-
 
 class User(Base):
     __tablename__ = "users"
@@ -61,60 +57,6 @@ class MonthlyStats(Base):
     
     # Relationship
     teacher = relationship("Teacher", back_populates="monthly_stats")
-
-class QualityReport(Base):
-    __tablename__ = "quality_reports"
-
-    id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=False)
-    month = Column(Integer, nullable=False)
-    year = Column(Integer, nullable=False)
-    
-    # Quality data
-    quality_score = Column(Float, nullable=False)
-    quality_summary = Column(Text)
-    
-    # Timestamps
-    uploaded_at = Column(DateTime, default=func.now())
-    
-    # Relationship
-    teacher = relationship("Teacher", back_populates="quality_reports")
-
-class StudentReport(Base):
-    __tablename__ = "student_reports"
-
-    id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=False)
-    month = Column(Integer, nullable=False)
-    year = Column(Integer, nullable=False)
-    
-    # Student feedback data
-    student_feedback_score = Column(Float, nullable=False)
-    student_feedback_summary = Column(Text)
-    
-    # Timestamps
-    uploaded_at = Column(DateTime, default=func.now())
-    
-    # Relationship
-    teacher = relationship("Teacher", back_populates="student_reports")
-
-class OperationsReport(Base):
-    __tablename__ = "operations_reports"
-
-    id = Column(Integer, primary_key=True, index=True)
-    teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=False)
-    month = Column(Integer, nullable=False)
-    year = Column(Integer, nullable=False)
-    
-    # Operations data
-    operations_on_schedule = Column(Boolean, nullable=False)
-    operations_attitude_summary = Column(Text)
-    
-    # Timestamps
-    uploaded_at = Column(DateTime, default=func.now())
-    
-    # Relationship
-    teacher = relationship("Teacher", back_populates="operations_reports")
 
 class LibraryHistoricalStats(Base):
     __tablename__ = "library_historical_stats"
