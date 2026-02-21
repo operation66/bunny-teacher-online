@@ -183,7 +183,7 @@ async def upsert_teachers_from_bunny(db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         logger.error(f"Error upserting teachers from Bunny libraries: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to upsert teachers: {str(e)}")
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 @app.get("/teachers/", response_model=List[schemas.Teacher])
@@ -297,8 +297,7 @@ async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         logger.error(f"Error in sync_library_stats: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error syncing statistics: {str(e)}")
-
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 @app.post("/bunny-libraries/raw-api-response/")
 async def get_raw_api_response(request: dict, db: Session = Depends(get_db)):
@@ -330,7 +329,7 @@ async def get_raw_api_response(request: dict, db: Session = Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Error getting raw API response: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 # ============================================
@@ -856,7 +855,8 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
 
     except Exception as e:
         logger.error(f"Batch fetch error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
+
 
 
 @app.post("/historical-stats/sync/", response_model=schemas.SyncResponse)
@@ -1037,7 +1037,7 @@ async def get_libraries_with_history(with_stats_only: bool = False, db: Session 
 
     except Exception as e:
         logger.error(f"Get libraries with history error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 # ============================================
@@ -1124,7 +1124,7 @@ def create_section(section: SectionCreate, db: Session = Depends(get_db)):
                 "created_at": db_section.created_at.isoformat() if db_section.created_at else None}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 @app.delete("/sections/{section_id}")
@@ -1165,7 +1165,7 @@ def create_subject(subject: SubjectCreate, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 @app.delete("/subjects/{subject_id}")
@@ -1567,7 +1567,7 @@ async def auto_match_teachers(db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"Auto-match error: {e}")
         import traceback; logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 # ============================================
@@ -1833,7 +1833,7 @@ def get_libraries_preview(period_id: int, stage_id: int, db: Session = Depends(g
     except Exception as e:
         logger.error(f"Error in get_libraries_preview: {e}")
         import traceback; logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 @app.post("/calculate-payments/{period_id}/{stage_id}", response_model=CalculatePaymentsResponse)
@@ -2097,7 +2097,7 @@ async def calculate_payments(
         db.rollback()
         logger.error(f"Payment calculation error: {e}")
         import traceback; logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
