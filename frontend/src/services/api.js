@@ -1,16 +1,16 @@
 import axios from 'axios';
 
-const envBase = import.meta.env?.VITE_API_BASE_URL;
-const API_BASE_URL = (envBase && envBase.trim() !== '')
-  ? envBase.replace(/\/$/, '')
+const _envBase = import.meta.env?.VITE_API_BASE_URL;
+const API_BASE_URL = (_envBase && _envBase.trim() !== '')
+  ? _envBase.replace(/\/$/, '')
   : '/api';
 
-const api = axios.create({
+export const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
+
+const api = apiClient;
 
 // Teachers API
 export const teachersAPI = {
