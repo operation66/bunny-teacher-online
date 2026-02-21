@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from typing import List
 import logging
 from passlib.context import CryptContext
+from jose import jwt, JWTError
+from fastapi.security import OAuth2PasswordBearer
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import os
@@ -125,7 +127,7 @@ app.add_middleware(
 # ============================================
 
 @app.post("/teachers/upsert-from-bunny/", response_model=schemas.UpsertTeachersResponse)
-async def upsert_teachers_from_bunny(db: Session = Depends(get_db)):
+async def upsert_teachers_from_bunny(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         libraries = await get_bunny_libraries()
 
@@ -185,12 +187,12 @@ async def upsert_teachers_from_bunny(db: Session = Depends(get_db)):
 
 
 @app.get("/teachers/", response_model=List[schemas.Teacher])
-def read_teachers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def read_teachers(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return db.query(models.Teacher).offset(skip).limit(limit).all()
 
 
 @app.get("/teachers/{teacher_id}", response_model=schemas.Teacher)
-def read_teacher(teacher_id: int, db: Session = Depends(get_db)):
+def read_teacher(teacher_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_teacher = db.query(models.Teacher).filter(models.Teacher.id == teacher_id).first()
     if db_teacher is None:
         raise HTTPException(status_code=404, detail="Teacher not found")
@@ -198,7 +200,7 @@ def read_teacher(teacher_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/teachers/{teacher_id}/monthly-stats", response_model=List[schemas.MonthlyStats])
-def get_teacher_monthly_stats(teacher_id: int, db: Session = Depends(get_db)):
+def get_teacher_monthly_stats(teacher_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_teacher = db.query(models.Teacher).filter(models.Teacher.id == teacher_id).first()
     if db_teacher is None:
         raise HTTPException(status_code=404, detail="Teacher not found")
@@ -212,7 +214,7 @@ def get_teacher_monthly_stats(teacher_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @app.get("/bunny-libraries/", response_model=List[schemas.BunnyLibrary])
-async def fetch_bunny_libraries(db: Session = Depends(get_db)):
+async def fetch_bunny_libraries(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         libraries = await get_bunny_libraries()
         formatted_libraries = []
@@ -237,7 +239,7 @@ async def fetch_bunny_libraries(db: Session = Depends(get_db)):
         return []
 
 @app.post("/bunny-libraries/sync-stats/")
-async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
+async def sync_library_stats(request: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         library_ids = request.get("library_ids", [])
         month = request.get("month", datetime.now().month)
@@ -298,7 +300,7 @@ async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
 @app.post("/bunny-libraries/raw-api-response/")
-async def get_raw_api_response(request: dict, db: Session = Depends(get_db)):
+async def get_raw_api_response(request: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         library_id = request.get("library_id")
         start_date = request.get("start_date")
@@ -335,6 +337,37 @@ async def get_raw_api_response(request: dict, db: Session = Depends(get_db)):
 # ============================================
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# JWT Configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = db.query(models.User).filter(models.User.id == int(user_id)).first()
+    if user is None or not user.is_active:
+        raise credentials_exception
+    return user
 
 def hash_password(password: str) -> str:
     return _pwd_context.hash(password)
@@ -347,12 +380,12 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 @app.get("/users/", response_model=List[schemas.User])
-def get_users(db: Session = Depends(get_db)):
+def get_users(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return db.query(models.User).all()
 
 
 @app.post("/users/", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     existing = db.query(models.User).filter(models.User.email == user.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
@@ -368,7 +401,7 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 
 @app.put("/users/{user_id}", response_model=schemas.User)
-def update_user(user_id: int, update: schemas.UserUpdate, db: Session = Depends(get_db)):
+def update_user(user_id: int, update: schemas.UserUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_user = db.query(models.User).filter(models.User.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -389,7 +422,7 @@ def update_user(user_id: int, update: schemas.UserUpdate, db: Session = Depends(
 
 
 @app.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_user = db.query(models.User).filter(models.User.id == user_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -399,13 +432,17 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login", response_model=schemas.LoginResponse)
-def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
+def login(req: schemas.LoginRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     user = db.query(models.User).filter(models.User.email == req.email).first()
     if not user or not user.is_active or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+    access_token = create_access_token(data={"sub": str(user.id)})
+    
     return schemas.LoginResponse(
         success=True, message="Login successful",
         user_id=user.id, email=user.email, allowed_pages=user.allowed_pages or [],
+        access_token=access_token, token_type="bearer"
     )
 
 # ============================================
@@ -413,12 +450,12 @@ def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
 # ============================================
 
 @app.get("/library-configs/", response_model=List[schemas.LibraryConfig])
-def get_library_configs(db: Session = Depends(get_db)):
+def get_library_configs(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return db.query(models.LibraryConfig).all()
 
 
 @app.get("/library-configs/{library_id}", response_model=schemas.LibraryConfig)
-def get_library_config(library_id: int, db: Session = Depends(get_db)):
+def get_library_config(library_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
     if not config:
         raise HTTPException(status_code=404, detail="Library configuration not found")
@@ -426,7 +463,7 @@ def get_library_config(library_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/library-configs/", response_model=schemas.LibraryConfig)
-def create_library_config(config: schemas.LibraryConfigCreate, db: Session = Depends(get_db)):
+def create_library_config(config: schemas.LibraryConfigCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     existing_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == config.library_id).first()
     if existing_config:
         existing_config.library_name = config.library_name
@@ -444,7 +481,7 @@ def create_library_config(config: schemas.LibraryConfigCreate, db: Session = Dep
         return db_config
 
 @app.put("/library-configs/{library_id}", response_model=schemas.LibraryConfig)
-def update_library_config(library_id: int, config: schemas.LibraryConfigUpdate, db: Session = Depends(get_db)):
+def update_library_config(library_id: int, config: schemas.LibraryConfigUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
     if not db_config:
         raise HTTPException(status_code=404, detail=f"Library configuration not found for library_id {library_id}")
@@ -479,7 +516,7 @@ def update_library_config(library_id: int, config: schemas.LibraryConfigUpdate, 
 
 
 @app.delete("/library-configs/{library_id}")
-def delete_library_config(library_id: int, db: Session = Depends(get_db)):
+def delete_library_config(library_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_config = db.query(models.LibraryConfig).filter(models.LibraryConfig.library_id == library_id).first()
     if not db_config:
         raise HTTPException(status_code=404, detail="Library configuration not found")
@@ -489,7 +526,7 @@ def delete_library_config(library_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/library-configs/sync-from-bunny/")
-async def sync_library_configs_from_bunny(db: Session = Depends(get_db)):
+async def sync_library_configs_from_bunny(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         libraries = await get_bunny_libraries()
         logger.info(f"Fetched {len(libraries)} libraries from Bunny.net API")
@@ -580,7 +617,7 @@ def read_root():
 # ============================================
 
 @app.post("/historical-stats/batch-fetch/", response_model=schemas.BatchFetchResponse)
-async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Session = Depends(get_db)):
+async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         results = []
         successful_fetches = 0
@@ -665,7 +702,7 @@ async def batch_fetch_library_stats(request: schemas.BatchFetchRequest, db: Sess
 
 
 @app.post("/historical-stats/sync/", response_model=schemas.SyncResponse)
-async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depends(get_db)):
+async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         logger.info("=" * 60)
         logger.info("SYNC TO LIBRARIES PAGE - REQUEST RECEIVED")
@@ -773,7 +810,7 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
 
 
 @app.get("/historical-stats/libraries/", response_model=List[schemas.LibraryWithHistory])
-async def get_libraries_with_history(with_stats_only: bool = False, db: Session = Depends(get_db)):
+async def get_libraries_with_history(with_stats_only: bool = False, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         libraries_query = db.query(
             models.LibraryHistoricalStats.library_id,
@@ -850,14 +887,14 @@ async def get_libraries_with_history(with_stats_only: bool = False, db: Session 
 # ============================================
 
 @app.get("/stages/")
-def get_stages(db: Session = Depends(get_db)):
+def get_stages(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     stages = db.query(Stage).order_by(Stage.display_order).all()
     return [{"id": s.id, "code": s.code, "name": s.name, "display_order": s.display_order,
              "created_at": s.created_at.isoformat() if s.created_at else None} for s in stages]
 
 
 @app.post("/stages/")
-def create_stage(stage: StageCreate, db: Session = Depends(get_db)):
+def create_stage(stage: StageCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         logger.info(f"Creating stage with data: {stage.dict()}")
         existing = db.query(Stage).filter(Stage.code == stage.code).first()
@@ -880,7 +917,7 @@ def create_stage(stage: StageCreate, db: Session = Depends(get_db)):
 
 
 @app.put("/stages/{stage_id}")
-def update_stage(stage_id: int, stage: StageUpdate, db: Session = Depends(get_db)):
+def update_stage(stage_id: int, stage: StageUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_stage = db.query(Stage).filter(Stage.id == stage_id).first()
     if not db_stage:
         raise HTTPException(status_code=404, detail="Stage not found")
@@ -894,7 +931,7 @@ def update_stage(stage_id: int, stage: StageUpdate, db: Session = Depends(get_db
 
 
 @app.delete("/stages/{stage_id}")
-def delete_stage(stage_id: int, db: Session = Depends(get_db)):
+def delete_stage(stage_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_stage = db.query(Stage).filter(Stage.id == stage_id).first()
     if not db_stage:
         raise HTTPException(status_code=404, detail="Stage not found")
@@ -908,7 +945,7 @@ def delete_stage(stage_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @app.get("/sections/")
-def get_sections(stage_id: int = None, db: Session = Depends(get_db)):
+def get_sections(stage_id: int = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     query = db.query(Section)
     if stage_id:
         query = query.filter(Section.stage_id == stage_id)
@@ -918,7 +955,7 @@ def get_sections(stage_id: int = None, db: Session = Depends(get_db)):
 
 
 @app.post("/sections/")
-def create_section(section: SectionCreate, db: Session = Depends(get_db)):
+def create_section(section: SectionCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         db_section = Section(**section.dict())
         db.add(db_section)
@@ -933,7 +970,7 @@ def create_section(section: SectionCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/sections/{section_id}")
-def delete_section(section_id: int, db: Session = Depends(get_db)):
+def delete_section(section_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_section = db.query(Section).filter(Section.id == section_id).first()
     if not db_section:
         raise HTTPException(status_code=404, detail="Section not found")
@@ -947,14 +984,14 @@ def delete_section(section_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @app.get("/subjects/")
-def get_subjects(db: Session = Depends(get_db)):
+def get_subjects(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     subjects = db.query(Subject).all()
     return [{"id": s.id, "code": s.code, "name": s.name, "is_common": s.is_common,
              "created_at": s.created_at.isoformat() if s.created_at else None} for s in subjects]
 
 
 @app.post("/subjects/")
-def create_subject(subject: SubjectCreate, db: Session = Depends(get_db)):
+def create_subject(subject: SubjectCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         existing = db.query(Subject).filter(Subject.code == subject.code).first()
         if existing:
@@ -974,7 +1011,7 @@ def create_subject(subject: SubjectCreate, db: Session = Depends(get_db)):
 
 
 @app.delete("/subjects/{subject_id}")
-def delete_subject(subject_id: int, db: Session = Depends(get_db)):
+def delete_subject(subject_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_subject = db.query(Subject).filter(Subject.id == subject_id).first()
     if not db_subject:
         raise HTTPException(status_code=404, detail="Subject not found")
@@ -988,7 +1025,7 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @app.get("/teacher-assignments/", response_model=List[TeacherAssignmentWithDetails])
-def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db)):
+def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     from sqlalchemy.orm import joinedload
     query = db.query(TeacherAssignment).options(
         joinedload(TeacherAssignment.stage),
@@ -1145,7 +1182,7 @@ def _assignment_to_dict(obj) -> dict:
 
 
 @app.post("/teacher-assignments/", response_model=TeacherAssignmentSchema)
-def create_teacher_assignment(assignment: TeacherAssignmentCreate, db: Session = Depends(get_db)):
+def create_teacher_assignment(assignment: TeacherAssignmentCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         q = db.query(TeacherAssignment).filter(
             TeacherAssignment.library_id == assignment.library_id,
@@ -1186,7 +1223,7 @@ def create_teacher_assignment(assignment: TeacherAssignmentCreate, db: Session =
 
 
 @app.put("/teacher-assignments/{assignment_id}", response_model=TeacherAssignmentSchema)
-def update_teacher_assignment(assignment_id: int, assignment: TeacherAssignmentUpdate, db: Session = Depends(get_db)):
+def update_teacher_assignment(assignment_id: int, assignment: TeacherAssignmentUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_obj = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
     if not db_obj:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -1199,7 +1236,7 @@ def update_teacher_assignment(assignment_id: int, assignment: TeacherAssignmentU
 
 
 @app.delete("/teacher-assignments/{assignment_id}")
-def delete_teacher_assignment(assignment_id: int, db: Session = Depends(get_db)):
+def delete_teacher_assignment(assignment_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_assignment = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
     if not db_assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -1209,7 +1246,7 @@ def delete_teacher_assignment(assignment_id: int, db: Session = Depends(get_db))
 
 
 @app.post("/teacher-assignments/auto-match", response_model=AutoMatchResponse)
-async def auto_match_teachers(db: Session = Depends(get_db)):
+async def auto_match_teachers(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         libraries = await get_bunny_libraries()
 
@@ -1380,7 +1417,7 @@ async def auto_match_teachers(db: Session = Depends(get_db)):
 # ============================================
 
 @app.get("/financial-periods/", response_model=List[FinancialPeriodSchema])
-def get_financial_periods(db: Session = Depends(get_db)):
+def get_financial_periods(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     periods = db.query(FinancialPeriod).order_by(
         FinancialPeriod.year.desc(), FinancialPeriod.created_at.desc()
     ).all()
@@ -1388,7 +1425,7 @@ def get_financial_periods(db: Session = Depends(get_db)):
 
 
 @app.post("/financial-periods/", response_model=FinancialPeriodSchema)
-def create_financial_period(period: FinancialPeriodCreate, db: Session = Depends(get_db)):
+def create_financial_period(period: FinancialPeriodCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         existing = db.query(FinancialPeriod).filter(
             FinancialPeriod.name == period.name
@@ -1410,7 +1447,7 @@ def create_financial_period(period: FinancialPeriodCreate, db: Session = Depends
 
 
 @app.put("/financial-periods/{period_id}", response_model=FinancialPeriodSchema)
-def update_financial_period(period_id: int, period: FinancialPeriodUpdate, db: Session = Depends(get_db)):
+def update_financial_period(period_id: int, period: FinancialPeriodUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         db_period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
         if not db_period:
@@ -1429,7 +1466,7 @@ def update_financial_period(period_id: int, period: FinancialPeriodUpdate, db: S
 
 
 @app.delete("/financial-periods/{period_id}")
-def delete_financial_period(period_id: int, db: Session = Depends(get_db)):
+def delete_financial_period(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     db_period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
     if not db_period:
         raise HTTPException(status_code=404, detail="Period not found")
@@ -1443,7 +1480,7 @@ def delete_financial_period(period_id: int, db: Session = Depends(get_db)):
 # ============================================
 
 @app.post("/section-revenues/", response_model=SectionRevenueSchema)
-def create_or_update_section_revenue(revenue: SectionRevenueCreate, db: Session = Depends(get_db)):
+def create_or_update_section_revenue(revenue: SectionRevenueCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         existing = db.query(SectionRevenue).filter(
             SectionRevenue.period_id  == revenue.period_id,
@@ -1476,7 +1513,7 @@ def create_or_update_section_revenue(revenue: SectionRevenueCreate, db: Session 
 # ============================================
 
 @app.get("/financials/{period_id}/{stage_id}", response_model=FinancialData)
-def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_db)):
+def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
         period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
         if not period:
@@ -1557,7 +1594,7 @@ def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_
 
 
 @app.get("/financials/{period_id}/{stage_id}/libraries-preview")
-def get_libraries_preview(period_id: int, stage_id: int, db: Session = Depends(get_db)):
+def get_libraries_preview(period_id: int, stage_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     """
     Returns all assigned libraries for this stage with their watch time
     broken down per period month. Libraries with zero analytics are flagged.
@@ -1906,7 +1943,7 @@ async def calculate_payments(
 
 
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
-def get_teacher_payments(period_id: int, db: Session = Depends(get_db)):
+def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     payments = db.query(TeacherPayment).filter(TeacherPayment.period_id == period_id).all()
     payments_with_details = []
     for payment in payments:
