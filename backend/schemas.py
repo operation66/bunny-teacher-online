@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, validator, Field
 from typing import Optional, List, Dict, Any
 try:
     from typing import Literal
