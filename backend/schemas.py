@@ -47,12 +47,12 @@ class Teacher(TeacherBase):
 
 # User schemas
 class UserBase(BaseModel):
-    email: str
+    email: EmailStr
     allowed_pages: List[str]
     is_active: Optional[bool] = True
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(min_length=8, max_length=128)
 
 class UserUpdate(BaseModel):
     email: Optional[str] = None
