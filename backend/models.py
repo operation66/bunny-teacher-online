@@ -2,7 +2,11 @@ from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, Text, B
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
-from financial_models import *
+from financial_models import (
+    Stage, Section, Subject, StageSectionSubject,
+    TeacherAssignment, FinancialPeriod, SectionRevenue,
+    TeacherPayment, Base as FinancialBase
+)
 
 class LibraryConfig(Base):
     __tablename__ = "library_configs"
