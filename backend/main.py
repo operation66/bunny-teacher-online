@@ -264,26 +264,13 @@ async def fetch_bunny_libraries(db: Session = Depends(get_db)):
             formatted_libraries.append({"id": lib_id, "name": lib_name, "video_views": 0, "total_watch_time_seconds": 0})
 
         if not formatted_libraries:
-            logger.warning("Bunny.net API unavailable, returning mock data")
-            return [
-                {"id": 26972, "name": "(0LD)S1-MATH-EN--Shady Elsharkawy (FAWZY)", "video_views": 0, "total_watch_time_seconds": 0},
-                {"id": 27845, "name": "S2-PHYSICS-AR--Ahmed Hassan", "video_views": 0, "total_watch_time_seconds": 0},
-                {"id": 28156, "name": "S3-CHEMISTRY-EN--Sarah Mohamed", "video_views": 0, "total_watch_time_seconds": 0},
-                {"id": 29234, "name": "S1-BIOLOGY-AR--Omar Ali", "video_views": 0, "total_watch_time_seconds": 0},
-                {"id": 30567, "name": "S2-MATH-EN--Fatima Ahmed", "video_views": 0, "total_watch_time_seconds": 0}
-            ]
+            logger.warning("Bunny.net API unavailable, returning empty list")
+            return []
         return formatted_libraries
 
     except Exception as e:
         logger.error(f"Error in fetch_bunny_libraries: {str(e)}")
-        return [
-            {"id": 26972, "name": "(0LD)S1-MATH-EN--Shady Elsharkawy (FAWZY)", "video_views": 0, "total_watch_time_seconds": 0},
-            {"id": 27845, "name": "S2-PHYSICS-AR--Ahmed Hassan", "video_views": 0, "total_watch_time_seconds": 0},
-            {"id": 28156, "name": "S3-CHEMISTRY-EN--Sarah Mohamed", "video_views": 0, "total_watch_time_seconds": 0},
-            {"id": 29234, "name": "S1-BIOLOGY-AR--Omar Ali", "video_views": 0, "total_watch_time_seconds": 0},
-            {"id": 30567, "name": "S2-MATH-EN--Fatima Ahmed", "video_views": 0, "total_watch_time_seconds": 0}
-        ]
-
+        return []
 
 @app.post("/bunny-libraries/sync-stats/")
 async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
@@ -385,16 +372,17 @@ async def get_raw_api_response(request: dict, db: Session = Depends(get_db)):
 # USERS AND AUTHENTICATION
 # ============================================
 
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return _pwd_context.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
     try:
-        return hash_password(password) == password_hash
+        return _pwd_context.verify(password, password_hash)
     except Exception:
         return False
-
 
 @app.get("/users/", response_model=List[schemas.User])
 def get_users(db: Session = Depends(get_db)):
