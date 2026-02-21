@@ -117,8 +117,8 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_origin_regex=r"^https?:\/\/(localhost|127\.0\.0\.1|\S+\.vercel\.app|\S+\.onrender\.com)(:\d+)?$",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -173,40 +173,6 @@ async def upsert_teachers_from_bunny(db: Session = Depends(get_db)):
                     action="error", success=False,
                     message=f"Failed to upsert library {lib_id}", error=str(e)
                 ))
-
-        try:
-            pending_new = list(db.new)
-            if pending_new:
-                logger.warning(f"Pending new objects before commit: {[type(o).__name__ for o in pending_new]}")
-            db.flush()
-        except Exception as flush_err:
-            logger.error(f"Flush error before commit: {flush_err}")
-            try:
-                for obj in list(db.new):
-                    try:
-                        db.expunge(obj)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            db.rollback()
-
-        try:
-            for obj in list(db.new):
-                try:
-                    if isinstance(obj, models.LibraryConfig):
-                        if getattr(obj, "library_id", None) is None or getattr(obj, "library_name", None) is None:
-                            logger.error(f"Expunging invalid LibraryConfig: library_id={getattr(obj, 'library_id', None)}")
-                            db.expunge(obj)
-                except Exception:
-                    pass
-        except Exception as precommit_err:
-            logger.error(f"Pre-commit validation error: {precommit_err}")
-
-        try:
-            db.expunge_all()
-        except Exception as detach_err:
-            logger.warning(f"Failed to expunge all before commit: {detach_err}")
 
         db.commit()
 
