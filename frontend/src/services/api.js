@@ -14,8 +14,8 @@ const api = apiClient;
 
 // Teachers API
 export const teachersAPI = {
-  // Get all teachers (fetch a large batch to cover all libraries)
-  getAll: (skip = 0, limit = 10000) => 
+  // Get all teachers
+  getAll: (skip = 0, limit = 500) => 
     api.get(`/teachers/?skip=${skip}&limit=${limit}`),
   
   // Get teacher by ID
