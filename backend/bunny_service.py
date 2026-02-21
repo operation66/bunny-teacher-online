@@ -225,7 +225,6 @@ async def get_library_monthly_stats(library_id: int, month: int, year: int, db: 
         
         async with httpx.AsyncClient(verify=True, timeout=60.0) as client:
             logger.info(f"Making request to: {BUNNY_STREAM_API_BASE_URL}/library/{library_id}/statistics")
-            logger.info(f"Using API key: {api_key[:10]}...")
             logger.info(f"Precise date range: {start_date} to {end_date} (UTC)")
             
             # First get library info to get the name
