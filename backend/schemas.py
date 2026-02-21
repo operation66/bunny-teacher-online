@@ -216,8 +216,8 @@ class LibraryHistoricalStats(LibraryHistoricalStatsBase):
 # Batch fetch request/response schemas
 class BatchFetchRequest(BaseModel):
     library_ids: List[int]
-    month: int
-    year: int
+    month: int = Field(ge=1, le=12)
+    year: int = Field(ge=2000, le=2100)
 
 class LibraryFetchStatus(BaseModel):
     library_id: int
@@ -240,8 +240,8 @@ class BatchFetchResponse(BaseModel):
 # Sync request/response schemas
 class SyncRequest(BaseModel):
     library_ids: Optional[List[int]] = None  # If None, sync all unsynced
-    month: int
-    year: int
+    month: int = Field(ge=1, le=12)
+    year: int = Field(ge=2000, le=2100)
 
 class LibrarySyncStatus(BaseModel):
     library_id: int
