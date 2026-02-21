@@ -1,14 +1,6 @@
-import axios from 'axios';
+import { apiClient as authApi } from './api';
 
-const envBase = import.meta.env?.VITE_API_BASE_URL;
-const API_BASE_URL = (envBase && envBase.trim() !== '')
-  ? envBase.replace(/\/$/, '')
-  : '/api';
-
-export const authApi = axios.create({
-  baseURL: API_BASE_URL,
-  headers: { 'Content-Type': 'application/json' }
-});
+export { authApi };
 
 export const login = (email, password) =>
   authApi.post('/auth/login', { email, password }).then(res => res.data);
