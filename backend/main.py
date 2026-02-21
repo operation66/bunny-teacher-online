@@ -267,8 +267,7 @@ async def sync_library_stats(request: dict, db: Session = Depends(get_db)):
                     display_name = (cfg.library_name if cfg and cfg.library_name else f"Library {library_id}")
                     teacher = models.Teacher(name=display_name, bunny_library_id=library_id)
                     db.add(teacher)
-                    db.commit()
-                    db.refresh(teacher)
+                    db.flush()   # assigns the ID without committing
 
                 existing_stat = db.query(models.MonthlyStats).filter(
                     models.MonthlyStats.teacher_id == teacher.id,
@@ -1189,25 +1188,34 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db)):
 
 @app.get("/teacher-assignments/", response_model=List[TeacherAssignmentWithDetails])
 def get_teacher_assignments(stage_id: int = None, db: Session = Depends(get_db)):
-    query = db.query(TeacherAssignment)
+    from sqlalchemy.orm import joinedload
+    query = db.query(TeacherAssignment).options(
+        joinedload(TeacherAssignment.stage),
+        joinedload(TeacherAssignment.section),
+        joinedload(TeacherAssignment.subject),
+    )
     if stage_id:
         query = query.filter(TeacherAssignment.stage_id == stage_id)
     assignments = query.all()
     result = []
     for assignment in assignments:
-        stage = db.query(Stage).filter(Stage.id == assignment.stage_id).first()
-        section = db.query(Section).filter(Section.id == assignment.section_id).first() if assignment.section_id else None
-        subject = db.query(Subject).filter(Subject.id == assignment.subject_id).first()
-        assignment_dict = {
-            **assignment.__dict__,
-            "stage_name": stage.name if stage else None,
-            "section_name": section.name if section else None,
-            "subject_name": subject.name if subject else None,
-            "subject_is_common": subject.is_common if subject else None
-        }
-        result.append(TeacherAssignmentWithDetails(**assignment_dict))
+        result.append(TeacherAssignmentWithDetails(**{
+            "id": assignment.id,
+            "library_id": assignment.library_id,
+            "library_name": assignment.library_name,
+            "stage_id": assignment.stage_id,
+            "section_id": assignment.section_id,
+            "subject_id": assignment.subject_id,
+            "tax_rate": assignment.tax_rate,
+            "revenue_percentage": assignment.revenue_percentage,
+            "created_at": assignment.created_at,
+            "updated_at": assignment.updated_at,
+            "stage_name": assignment.stage.name if assignment.stage else None,
+            "section_name": assignment.section.name if assignment.section else None,
+            "subject_name": assignment.subject.name if assignment.subject else None,
+            "subject_is_common": assignment.subject.is_common if assignment.subject else None,
+        }))
     return result
-
 
 # ============================================
 # SERIALIZER HELPERS
