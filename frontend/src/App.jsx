@@ -35,12 +35,4 @@ function App() {
   );
 }
 
-const styles = {
-  main: {
-    paddingTop: '80px', // Account for fixed navbar
-    minHeight: '100vh',
-    backgroundColor: '#f8f9fa',
-  },
-};
-
 export default App;
