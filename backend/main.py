@@ -3,8 +3,6 @@ from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
-import io
-import random
 import logging
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
