@@ -66,7 +66,7 @@ const UsersPageInner = () => {
             <div className="flex items-end gap-2">
               <div className="flex-1">
                 <label className="text-sm text-gray-700">Password</label>
-                <Input type="text" value={password} onChange={(e) => setPassword(e.target.value)} />
+                <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
               </div>
               <Button type="button" onClick={genPassword}>Generate</Button>
             </div>
