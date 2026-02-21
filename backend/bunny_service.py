@@ -54,13 +54,8 @@ def format_date_for_bunny_api(date_obj: datetime) -> str:
     elif date_obj.tzinfo != BUNNY_TIMEZONE:
         date_obj = date_obj.astimezone(BUNNY_TIMEZONE)
     
-    # Format as m-d-Y with zero-padded month/day (e.g., "09-01-2025")
-    # Use manual formatting to avoid Windows compatibility issues
-    month = str(date_obj.month).zfill(2)
-    day = str(date_obj.day).zfill(2)
-    year = str(date_obj.year)
     return date_obj.strftime("%Y-%m-%d")
-
+    
 def get_precise_date_range(month: int, year: int):
     """
     Get precise date range for a month with exact start and end times
