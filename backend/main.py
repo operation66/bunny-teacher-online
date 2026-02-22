@@ -1941,7 +1941,41 @@ async def calculate_payments(
         logger.error(f"Payment calculation error: {e}")
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
+        
+# ============================================
+# TEMPORARY - DELETE AFTER USE
+# ============================================
 
+@app.post("/setup/create-admin")
+def create_admin(db: Session = Depends(get_db)):
+    existing = db.query(models.User).filter(
+        models.User.email == "operation@elkheta.com"
+    ).first()
+    
+    if existing:
+        existing.password_hash = hash_password("11111111")
+        existing.is_active = True
+        existing.allowed_pages = [
+            "dashboard", "libraries", "bunny-libraries",
+            "library-config", "teachers", "financials",
+            "settings", "users"
+        ]
+        db.commit()
+        return {"message": "User updated successfully"}
+    
+    db_user = models.User(
+        email="operation@elkheta.com",
+        password_hash=hash_password("11111111"),
+        allowed_pages=[
+            "dashboard", "libraries", "bunny-libraries",
+            "library-config", "teachers", "financials",
+            "settings", "users"
+        ],
+        is_active=True,
+    )
+    db.add(db_user)
+    db.commit()
+    return {"message": "Admin user created successfully"}
 
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
 def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
