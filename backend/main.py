@@ -1946,7 +1946,7 @@ async def calculate_payments(
 # TEMPORARY - DELETE AFTER USE
 # ============================================
 
-@app.post("/setup/create-admin")
+@app.get("/setup/create-admin")  # ← changed POST to GET
 def create_admin(db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(
         models.User.email == "operation@elkheta.com"
@@ -1976,7 +1976,7 @@ def create_admin(db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     return {"message": "Admin user created successfully"}
-
+    
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
 def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     payments = db.query(TeacherPayment).filter(TeacherPayment.period_id == period_id).all()
