@@ -1954,14 +1954,14 @@ def create_admin(db: Session = Depends(get_db)):
         ).first()
         
         if existing:
-            existing.password_hash = hash_password("11111111")
+            existing.password_hash = hash_password("1111")
             existing.is_active = True
             db.commit()
             return {"message": "User updated successfully", "email": existing.email}
         
         db_user = models.User(
             email="operation@elkheta.com",
-            password_hash=hash_password("11111111"),
+            password_hash=hash_password("1111"),
             is_active=True,
         )
         db.add(db_user)
