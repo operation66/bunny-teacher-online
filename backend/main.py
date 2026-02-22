@@ -1946,37 +1946,33 @@ async def calculate_payments(
 # TEMPORARY - DELETE AFTER USE
 # ============================================
 
-@app.get("/setup/create-admin")  # ← changed POST to GET
+@app.get("/setup/create-admin")
 def create_admin(db: Session = Depends(get_db)):
-    existing = db.query(models.User).filter(
-        models.User.email == "operation@elkheta.com"
-    ).first()
-    
-    if existing:
-        existing.password_hash = hash_password("11111111")
-        existing.is_active = True
-        existing.allowed_pages = [
-            "dashboard", "libraries", "bunny-libraries",
-            "library-config", "teachers", "financials",
-            "settings", "users"
-        ]
+    try:
+        existing = db.query(models.User).filter(
+            models.User.email == "operation@elkheta.com"
+        ).first()
+        
+        if existing:
+            existing.password_hash = hash_password("11111111")
+            existing.is_active = True
+            db.commit()
+            return {"message": "User updated successfully", "email": existing.email}
+        
+        db_user = models.User(
+            email="operation@elkheta.com",
+            password_hash=hash_password("11111111"),
+            is_active=True,
+        )
+        db.add(db_user)
         db.commit()
-        return {"message": "User updated successfully"}
+        db.refresh(db_user)
+        return {"message": "Admin user created", "id": db_user.id}
     
-    db_user = models.User(
-        email="operation@elkheta.com",
-        password_hash=hash_password("11111111"),
-        allowed_pages=[
-            "dashboard", "libraries", "bunny-libraries",
-            "library-config", "teachers", "financials",
-            "settings", "users"
-        ],
-        is_active=True,
-    )
-    db.add(db_user)
-    db.commit()
-    return {"message": "Admin user created successfully"}
-    
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+        
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
 def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     payments = db.query(TeacherPayment).filter(TeacherPayment.period_id == period_id).all()
