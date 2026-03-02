@@ -24,7 +24,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('token', data.access_token);
     }
     
-    setUser({ id: data.user_id, email: data.email, allowedPages: data.allowed_pages });
+    setUser({ id: data.user_id, email: data.email, allowedPages: data.allowed_pages, token: data.access_token });
     return data;
   };
 
