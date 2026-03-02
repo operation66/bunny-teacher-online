@@ -18,8 +18,9 @@ const Navbar = () => {
     { path: '/financials', label: 'Financials', icon: DollarSign },
   ];
 
-  const navItems = user ? baseItems.filter(i => (user.allowedPages||[]).includes(i.path)) : [];
-
+// Fix: strip the leading slash
+const navItems = user ? baseItems.filter(i => (user.allowedPages||[]).includes(i.path.replace('/', ''))) : [];
+  
   return (
     <nav style={styles.navbar}>
       <div style={styles.container}>
