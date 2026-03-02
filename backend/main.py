@@ -164,10 +164,13 @@ def hash_password(password: str) -> str:
     
 def verify_password(password: str, password_hash: str) -> bool:
     try:
-        return _pwd_context.verify(password, password_hash)
+        import bcrypt
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
     except Exception:
-        return False
-
+        try:
+            return _pwd_context.verify(password, password_hash)
+        except Exception:
+            return False
 
 # ============================================
 # TEACHERS
