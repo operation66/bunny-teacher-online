@@ -1952,30 +1952,34 @@ async def calculate_payments(
 @app.get("/setup/create-admin")
 def create_admin(db: Session = Depends(get_db)):
     try:
-        existing = db.query(models.User).filter(
-            models.User.email == "operation@elkheta.com"
-        ).first()
-        
-        if existing:
-            db.delete(existing)
-            db.commit()
-        
         import bcrypt
+        from sqlalchemy import text as sql_text
+        import json
+
         raw = "admin1234".encode("utf-8")
         new_hash = bcrypt.hashpw(raw, bcrypt.gensalt()).decode("utf-8")
         
-        db_user = models.User(
-            email="operation@elkheta.com",
-            password_hash=new_hash,
-            is_active=True,
-            allowed_pages=["dashboard","libraries","bunny-libraries",
-                          "library-config","teachers","financials",
-                          "settings","users"]
-        )
-        db.add(db_user)
+        pages = json.dumps(["dashboard", "libraries", "bunny-libraries",
+                            "library-config", "teachers", "financials",
+                            "settings", "users"])
+
+        # Delete existing
+        db.execute(sql_text("DELETE FROM users WHERE email = 'operation@elkheta.com'"))
         db.commit()
-        db.refresh(db_user)
-        return {"message": "Done", "id": db_user.id}
+
+        # Insert with raw SQL to avoid JSON column issues
+        db.execute(sql_text(
+            f"INSERT INTO users (email, password_hash, allowed_pages, is_active) "
+            f"VALUES ('operation@elkheta.com', :hash, :pages::json, true)"
+        ), {"hash": new_hash, "pages": pages})
+        db.commit()
+
+        # Verify what was saved
+        result = db.execute(sql_text(
+            "SELECT id, email, allowed_pages FROM users WHERE email = 'operation@elkheta.com'"
+        )).fetchone()
+        
+        return {"message": "Done", "id": result[0], "allowed_pages": result[2]}
     
     except Exception as e:
         db.rollback()
