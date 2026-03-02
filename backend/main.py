@@ -1967,11 +1967,11 @@ def create_admin(db: Session = Depends(get_db)):
         db.execute(sql_text("DELETE FROM users WHERE email = 'operation@elkheta.com'"))
         db.commit()
 
-        # Insert with raw SQL to avoid JSON column issues
+        # Insert with all params as named parameters
         db.execute(sql_text(
-            f"INSERT INTO users (email, password_hash, allowed_pages, is_active) "
-            f"VALUES ('operation@elkheta.com', :hash, :pages::json, true)"
-        ), {"hash": new_hash, "pages": pages})
+            "INSERT INTO users (email, password_hash, allowed_pages, is_active) "
+            "VALUES (:email, :hash, cast(:pages as json), true)"
+        ), {"email": "operation@elkheta.com", "hash": new_hash, "pages": pages})
         db.commit()
 
         # Verify what was saved
