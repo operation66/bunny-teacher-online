@@ -125,7 +125,7 @@ app.add_middleware(
 # USERS AND AUTHENTICATION
 # ============================================
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 # JWT Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7")
 ALGORITHM = "HS256"
@@ -159,10 +159,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 def hash_password(password: str) -> str:
-    # Truncate to 72 bytes to avoid bcrypt limitation
-    password = password[:72]
-    return _pwd_context.hash(password)
-
+    encoded = password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
+    return _pwd_context.hash(encoded)
+    
 def verify_password(password: str, password_hash: str) -> bool:
     try:
         return _pwd_context.verify(password, password_hash)
@@ -1950,7 +1949,6 @@ async def calculate_payments(
 @app.get("/setup/create-admin")
 def create_admin(db: Session = Depends(get_db)):
     try:
-        # Force delete and recreate to avoid any hash issues
         existing = db.query(models.User).filter(
             models.User.email == "operation@elkheta.com"
         ).first()
@@ -1959,9 +1957,9 @@ def create_admin(db: Session = Depends(get_db)):
             db.delete(existing)
             db.commit()
         
-        # Create fresh with clean hash
-        password = "admin1234"[:72]
-        new_hash = _pwd_context.hash(password)
+        import bcrypt
+        raw = "admin1234".encode("utf-8")
+        new_hash = bcrypt.hashpw(raw, bcrypt.gensalt()).decode("utf-8")
         
         db_user = models.User(
             email="operation@elkheta.com",
@@ -1974,7 +1972,7 @@ def create_admin(db: Session = Depends(get_db)):
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
-        return {"message": "User recreated successfully", "id": db_user.id}
+        return {"message": "Done", "id": db_user.id}
     
     except Exception as e:
         db.rollback()
