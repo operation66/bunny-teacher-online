@@ -13,10 +13,12 @@ export const usersApi = {
 };
 
 export const PAGES = [
-  { key: '/libraries', label: 'Libraries' },
-  { key: '/bunny-libraries', label: 'Fetch Stats' },
-  { key: '/library-config', label: 'API Config' },
-  { key: '/dashboard', label: 'Dashboard' },
-  { key: '/settings', label: 'Settings' },
-  { key: '/financials', label: 'Financials' },
+  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'libraries', label: 'Libraries' },
+  { key: 'bunny-libraries', label: 'Fetch Stats' },
+  { key: 'library-config', label: 'API Config' },
+  { key: 'teachers', label: 'Teachers' },
+  { key: 'financials', label: 'Financials' },
+  { key: 'settings', label: 'Settings' },
+  { key: 'users', label: 'Users' },
 ];
