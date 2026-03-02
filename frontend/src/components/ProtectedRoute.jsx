@@ -11,9 +11,12 @@ const ProtectedRoute = ({ path, children }) => {
     return <Navigate to="/signin" replace state={{ from: location }} />;
   }
 
-  const allowed = Array.isArray(user.allowedPages) && user.allowedPages.includes(target);
+
+  // Fix: strip the leading slash
+const allowed = Array.isArray(user.allowedPages) && user.allowedPages.includes(target.replace('/', ''));
+  
   if (!allowed) {
-    return <Navigate to={user.allowedPages?.[0] || '/signin'} replace />;
+    return <Navigate to={`/${user.allowedPages?.[0]}` || '/signin'} replace />;
   }
 
   return children;
