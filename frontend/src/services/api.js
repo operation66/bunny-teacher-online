@@ -12,10 +12,17 @@ export const apiClient = axios.create({
 
 // NEW: Add a request interceptor to attach the JWT token
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  let token = localStorage.getItem('token');
+  
+  // Fallback: read from user object if token key is missing
+  if (!token) {
+    try {
+      const raw = localStorage.getItem('elkheta_user');
+      if (raw) token = JSON.parse(raw).token;
+    } catch {}
   }
+  
+  if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
