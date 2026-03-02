@@ -1950,27 +1950,31 @@ async def calculate_payments(
 @app.get("/setup/create-admin")
 def create_admin(db: Session = Depends(get_db)):
     try:
+        # Force delete and recreate to avoid any hash issues
         existing = db.query(models.User).filter(
             models.User.email == "operation@elkheta.com"
         ).first()
         
-        new_hash = hash_password("admin1234")
-        
         if existing:
-            existing.password_hash = new_hash
-            existing.is_active = True
+            db.delete(existing)
             db.commit()
-            return {"message": "Password updated", "email": existing.email}
+        
+        # Create fresh with clean hash
+        password = "admin1234"[:72]
+        new_hash = _pwd_context.hash(password)
         
         db_user = models.User(
             email="operation@elkheta.com",
             password_hash=new_hash,
             is_active=True,
+            allowed_pages=["dashboard","libraries","bunny-libraries",
+                          "library-config","teachers","financials",
+                          "settings","users"]
         )
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
-        return {"message": "User created", "id": db_user.id}
+        return {"message": "User recreated successfully", "id": db_user.id}
     
     except Exception as e:
         db.rollback()
