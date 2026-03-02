@@ -159,8 +159,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 def hash_password(password: str) -> str:
+    # Truncate to 72 bytes to avoid bcrypt limitation
+    password = password[:72]
     return _pwd_context.hash(password)
-
 
 def verify_password(password: str, password_hash: str) -> bool:
     try:
@@ -1953,21 +1954,23 @@ def create_admin(db: Session = Depends(get_db)):
             models.User.email == "operation@elkheta.com"
         ).first()
         
+        new_hash = hash_password("admin1234")
+        
         if existing:
-            existing.password_hash = hash_password("1111")
+            existing.password_hash = new_hash
             existing.is_active = True
             db.commit()
-            return {"message": "User updated successfully", "email": existing.email}
+            return {"message": "Password updated", "email": existing.email}
         
         db_user = models.User(
             email="operation@elkheta.com",
-            password_hash=hash_password("1111"),
+            password_hash=new_hash,
             is_active=True,
         )
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
-        return {"message": "Admin user created", "id": db_user.id}
+        return {"message": "User created", "id": db_user.id}
     
     except Exception as e:
         db.rollback()
