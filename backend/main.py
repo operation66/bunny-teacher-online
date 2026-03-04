@@ -79,7 +79,7 @@ try:
             conn.execute(sql_text("ALTER TABLE financial_periods ADD COLUMN months JSON"))
             logger.info("✅ Added months column")
 
-        result = conn.execute(sql_text(
+result = conn.execute(sql_text(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name='teacher_payments' AND column_name='monthly_watch_breakdown'"
         )).fetchone()
@@ -87,6 +87,15 @@ try:
             logger.info("Adding 'monthly_watch_breakdown' column to teacher_payments...")
             conn.execute(sql_text("ALTER TABLE teacher_payments ADD COLUMN monthly_watch_breakdown JSON"))
             logger.info("✅ Added monthly_watch_breakdown column")
+
+        result = conn.execute(sql_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='users' AND column_name='token_version'"
+        )).fetchone()
+        if not result:
+            logger.info("Adding 'token_version' column to users...")
+            conn.execute(sql_text("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1"))
+            logger.info("✅ Added token_version column")
 
     logger.info("✅ Financial table migrations complete")
 except Exception as e:
@@ -139,6 +148,12 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+def create_access_token_for_user(user: models.User):
+    return create_access_token(data={
+        "sub": str(user.id),
+        "ver": user.token_version
+    })
+    
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -148,6 +163,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
+        token_ver = payload.get("ver")
         if user_id is None:
             raise credentials_exception
     except JWTError:
@@ -156,8 +172,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(models.User).filter(models.User.id == int(user_id)).first()
     if user is None or not user.is_active:
         raise credentials_exception
+    # If token has a version, validate it matches current
+    if token_ver is not None and user.token_version != token_ver:
+        raise credentials_exception
     return user
-
+    
 def hash_password(password: str) -> str:
     import bcrypt
     raw = password.encode("utf-8")[:72]
@@ -442,7 +461,7 @@ def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
     if not user or not user.is_active or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
         
-    access_token = create_access_token(data={"sub": str(user.id)})
+    access_token = create_access_token_for_user(user)
     
     return schemas.LoginResponse(
         success=True, message="Login successful",
@@ -450,6 +469,15 @@ def login(req: schemas.LoginRequest, db: Session = Depends(get_db)):
         access_token=access_token, token_type="bearer"
     )
 
+@app.post("/users/{user_id}/force-logout")
+def force_logout_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    db_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_user.token_version = (db_user.token_version or 1) + 1
+    db.commit()
+    return {"success": True, "message": f"User {db_user.email} has been logged out"}
+    
 # ============================================
 # LIBRARY CONFIGURATIONS
 # ============================================
