@@ -1974,46 +1974,6 @@ async def calculate_payments(
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
         
-# ============================================
-# TEMPORARY - DELETE AFTER USE
-# ============================================
-
-@app.get("/setup/create-admin")
-def create_admin(db: Session = Depends(get_db)):
-    try:
-        import bcrypt
-        from sqlalchemy import text as sql_text
-        import json
-
-        raw = "admin1234".encode("utf-8")
-        new_hash = bcrypt.hashpw(raw, bcrypt.gensalt()).decode("utf-8")
-        
-        pages = json.dumps(["dashboard", "libraries", "bunny-libraries",
-                            "library-config", "teachers", "financials",
-                            "settings", "users"])
-
-        # Delete existing
-        db.execute(sql_text("DELETE FROM users WHERE email = 'operation@elkheta.com'"))
-        db.commit()
-
-        # Insert with all params as named parameters
-        db.execute(sql_text(
-            "INSERT INTO users (email, password_hash, allowed_pages, is_active) "
-            "VALUES (:email, :hash, cast(:pages as json), true)"
-        ), {"email": "operation@elkheta.com", "hash": new_hash, "pages": pages})
-        db.commit()
-
-        # Verify what was saved
-        result = db.execute(sql_text(
-            "SELECT id, email, allowed_pages FROM users WHERE email = 'operation@elkheta.com'"
-        )).fetchone()
-        
-        return {"message": "Done", "id": result[0], "allowed_pages": result[2]}
-    
-    except Exception as e:
-        db.rollback()
-        return {"error": str(e)}
-        
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
 def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     payments = db.query(TeacherPayment).filter(TeacherPayment.period_id == period_id).all()
