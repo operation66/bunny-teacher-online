@@ -14,14 +14,7 @@ const UsersPageInner = () => {
   const [success, setSuccess] = useState('');
   
   // Add Users page to the available options
-  const pageOptions = useMemo(() => {
-    const allPages = [...PAGES];
-    // Check if Users page already exists
-    if (!allPages.find(p => p.key === '/users')) {
-      allPages.push({ key: '/users', label: 'Users' });
-    }
-    return allPages;
-  }, []);
+const pageOptions = useMemo(() => [...PAGES], []);
   
   const load = async () => {
     try { setUsers(await usersApi.list()); } catch (e) { /* ignore */ }
