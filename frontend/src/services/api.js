@@ -14,7 +14,6 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use((config) => {
   let token = localStorage.getItem('token');
   
-  // Fallback: read from user object if token key is missing
   if (!token) {
     try {
       const raw = localStorage.getItem('elkheta_user');
@@ -25,6 +24,19 @@ apiClient.interceptors.request.use((config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('elkheta_user');
+      alert('Your session has been reset. Please sign in again.');
+      window.location.href = '/signin';
+    }
+    return Promise.reject(error);
+  }
+);
 
 const api = apiClient;
 
