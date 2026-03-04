@@ -12,25 +12,30 @@ const UsersPageInner = () => {
   const [selected, setSelected] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  
-  // Add Users page to the available options
-const pageOptions = useMemo(() => [...PAGES], []);
-  
+  const [loadError, setLoadError] = useState('');
+
+  const pageOptions = useMemo(() => [...PAGES], []);
+
   const load = async () => {
-    try { setUsers(await usersApi.list()); } catch (e) { /* ignore */ }
+    try {
+      const data = await usersApi.list();
+      setUsers(data);
+    } catch (e) {
+      setLoadError('Failed to load users: ' + (e?.response?.data?.detail || e.message));
+    }
   };
-  
+
   useEffect(() => { load(); }, []);
-  
+
   const toggle = (key) => {
     setSelected((prev) => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
-  
+
   const genPassword = () => {
     const p = Math.random().toString(36).slice(-10);
     setPassword(p);
   };
-  
+
   const createUser = async (e) => {
     e.preventDefault();
     setError(''); setSuccess('');
@@ -43,7 +48,7 @@ const pageOptions = useMemo(() => [...PAGES], []);
       setError(err?.response?.data?.detail || 'Failed to create user');
     }
   };
-  
+
   return (
     <div className="max-w-3xl mx-auto mt-8 space-y-8">
       <Card>
@@ -80,19 +85,25 @@ const pageOptions = useMemo(() => [...PAGES], []);
           </form>
         </CardContent>
       </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Existing Users</CardTitle>
         </CardHeader>
         <CardContent>
+          {loadError && <div className="text-sm text-red-600 mb-3">{loadError}</div>}
           <div className="space-y-2">
             {users.map(u => (
               <div key={u.id} className="p-3 border rounded-md">
                 <div className="font-medium">{u.email}</div>
-                <div className="text-sm text-gray-600">Pages: {Array.isArray(u.allowed_pages) ? u.allowed_pages.join(', ') : ''}</div>
+                <div className="text-sm text-gray-600">
+                  Pages: {Array.isArray(u.allowed_pages) ? u.allowed_pages.join(', ') : ''}
+                </div>
               </div>
             ))}
-            {users.length === 0 && <div className="text-sm text-gray-600">No users yet.</div>}
+            {users.length === 0 && !loadError && (
+              <div className="text-sm text-gray-600">No users yet.</div>
+            )}
           </div>
         </CardContent>
       </Card>
