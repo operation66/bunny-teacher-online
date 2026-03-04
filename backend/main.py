@@ -159,8 +159,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 def hash_password(password: str) -> str:
-    encoded = password.encode("utf-8")[:72].decode("utf-8", errors="ignore")
-    return _pwd_context.hash(encoded)
+    import bcrypt
+    raw = password.encode("utf-8")[:72]
+    return bcrypt.hashpw(raw, bcrypt.gensalt()).decode("utf-8")
     
 def verify_password(password: str, password_hash: str) -> bool:
     try:
