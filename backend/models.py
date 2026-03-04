@@ -39,6 +39,7 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     allowed_pages = Column(JSON, nullable=False, default=list)
     is_active = Column(Boolean, default=True)
+    token_version = Column(Integer, default=1, nullable=False, server_default='1')
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
