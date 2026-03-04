@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { usersApi, PAGES } from '../services/auth';
+import { usersApi, PAGES, authApi } from '../services/auth';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
@@ -8,21 +8,24 @@ const UsersPageInner = () => {
   const [users, setUsers] = useState([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [selected, setSelected] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loadError, setLoadError] = useState('');
 
   // Edit state
-  const [editingUser, setEditingUser] = useState(null); // holds the user being edited
+  const [editingUser, setEditingUser] = useState(null);
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [editSelected, setEditSelected] = useState([]);
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
 
-  // Delete state
+  // Delete / force-logout state
   const [deletingId, setDeletingId] = useState(null);
+  const [forcingLogoutId, setForcingLogoutId] = useState(null);
 
   const pageOptions = useMemo(() => [...PAGES], []);
 
@@ -37,13 +40,11 @@ const UsersPageInner = () => {
 
   useEffect(() => { load(); }, []);
 
-  const toggle = (key) => {
+  const toggle = (key) =>
     setSelected((prev) => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
-  };
 
-  const toggleEdit = (key) => {
+  const toggleEdit = (key) =>
     setEditSelected((prev) => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
-  };
 
   const genPassword = () => setPassword(Math.random().toString(36).slice(-10));
   const genEditPassword = () => setEditPassword(Math.random().toString(36).slice(-10));
@@ -65,6 +66,7 @@ const UsersPageInner = () => {
     setEditingUser(user);
     setEditEmail(user.email);
     setEditPassword('');
+    setShowEditPassword(false);
     setEditSelected(Array.isArray(user.allowed_pages) ? user.allowed_pages : []);
     setEditError('');
     setEditSuccess('');
@@ -107,6 +109,19 @@ const UsersPageInner = () => {
     }
   };
 
+  const forceLogout = async (userId, userEmail) => {
+    if (!window.confirm(`Force logout ${userEmail}? Their current session will be immediately invalidated.`)) return;
+    setForcingLogoutId(userId);
+    try {
+      await authApi.post(`/users/${userId}/force-logout`);
+      alert(`${userEmail} has been logged out successfully.`);
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Failed to force logout user');
+    } finally {
+      setForcingLogoutId(null);
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto mt-8 space-y-8">
 
@@ -124,7 +139,27 @@ const UsersPageInner = () => {
             <div className="flex items-end gap-2">
               <div className="flex-1">
                 <label className="text-sm text-gray-700">Password</label>
-                <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <div style={{ position: 'relative' }}>
+                  <Input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    style={{ paddingRight: '80px' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(p => !p)}
+                    style={{
+                      position: 'absolute', right: '10px', top: '50%',
+                      transform: 'translateY(-50%)', background: 'none',
+                      border: 'none', cursor: 'pointer', fontSize: '12px',
+                      color: '#666', padding: '2px 6px'
+                    }}
+                  >
+                    {showPassword ? 'Hide' : 'Show'}
+                  </button>
+                </div>
               </div>
               <Button type="button" onClick={genPassword}>Generate</Button>
             </div>
@@ -159,29 +194,39 @@ const UsersPageInner = () => {
 
                 {/* ── View mode ── */}
                 {editingUser?.id !== u.id && (
-                  <div className="p-3 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="font-medium">{u.email}</div>
-                      <div className="text-sm text-gray-500 mt-1">
-                        Pages: {Array.isArray(u.allowed_pages) ? u.allowed_pages.join(', ') : '—'}
+                  <div className="p-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="font-medium">{u.email}</div>
+                        <div className="text-sm text-gray-500 mt-1">
+                          Pages: {Array.isArray(u.allowed_pages) ? u.allowed_pages.join(', ') : '—'}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        onClick={() => startEdit(u)}
-                        style={{ backgroundColor: '#3498db', color: 'white', padding: '6px 14px', fontSize: '13px' }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        type="button"
-                        onClick={() => deleteUser(u.id)}
-                        disabled={deletingId === u.id}
-                        style={{ backgroundColor: '#e74c3c', color: 'white', padding: '6px 14px', fontSize: '13px' }}
-                      >
-                        {deletingId === u.id ? 'Deleting…' : 'Delete'}
-                      </Button>
+                      <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+                        <Button
+                          type="button"
+                          onClick={() => startEdit(u)}
+                          style={{ backgroundColor: '#3498db', color: 'white', padding: '6px 14px', fontSize: '13px' }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => forceLogout(u.id, u.email)}
+                          disabled={forcingLogoutId === u.id}
+                          style={{ backgroundColor: '#e67e22', color: 'white', padding: '6px 14px', fontSize: '13px' }}
+                        >
+                          {forcingLogoutId === u.id ? 'Logging out…' : 'Sign Out User'}
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => deleteUser(u.id)}
+                          disabled={deletingId === u.id}
+                          style={{ backgroundColor: '#e74c3c', color: 'white', padding: '6px 14px', fontSize: '13px' }}
+                        >
+                          {deletingId === u.id ? 'Deleting…' : 'Delete'}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -203,13 +248,30 @@ const UsersPageInner = () => {
 
                     <div className="flex items-end gap-2">
                       <div className="flex-1">
-                        <label className="text-sm text-gray-700">New Password <span className="text-gray-400">(leave blank to keep current)</span></label>
-                        <Input
-                          type="password"
-                          value={editPassword}
-                          onChange={(e) => setEditPassword(e.target.value)}
-                          placeholder="Leave blank to keep current"
-                        />
+                        <label className="text-sm text-gray-700">
+                          New Password <span className="text-gray-400">(leave blank to keep current)</span>
+                        </label>
+                        <div style={{ position: 'relative' }}>
+                          <Input
+                            type={showEditPassword ? 'text' : 'password'}
+                            value={editPassword}
+                            onChange={(e) => setEditPassword(e.target.value)}
+                            placeholder="Leave blank to keep current"
+                            style={{ paddingRight: '80px' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowEditPassword(p => !p)}
+                            style={{
+                              position: 'absolute', right: '10px', top: '50%',
+                              transform: 'translateY(-50%)', background: 'none',
+                              border: 'none', cursor: 'pointer', fontSize: '12px',
+                              color: '#666', padding: '2px 6px'
+                            }}
+                          >
+                            {showEditPassword ? 'Hide' : 'Show'}
+                          </button>
+                        </div>
                       </div>
                       <Button type="button" onClick={genEditPassword}>Generate</Button>
                     </div>
