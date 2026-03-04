@@ -79,7 +79,7 @@ try:
             conn.execute(sql_text("ALTER TABLE financial_periods ADD COLUMN months JSON"))
             logger.info("✅ Added months column")
 
-result = conn.execute(sql_text(
+        result = conn.execute(sql_text(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name='teacher_payments' AND column_name='monthly_watch_breakdown'"
         )).fetchone()
