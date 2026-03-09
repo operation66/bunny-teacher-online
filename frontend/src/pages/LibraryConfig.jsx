@@ -34,6 +34,7 @@ const LibraryConfig = () => {
   const [pendingChanges, setPendingChanges] = useState({});
   const [expandedId, setExpandedId] = useState(null);
   const [activeOnly, setActiveOnly] = useState(false);
+  const [inactiveOnly, setInactiveOnly] = useState(false);  
   const [selectedIds, setSelectedIds] = useState(new Set());
   const scrollRef = useRef(null);
   const [atTop, setAtTop] = useState(true);
@@ -77,9 +78,12 @@ const LibraryConfig = () => {
     if (activeOnly) {
       filtered = filtered.filter(cfg => !!(cfg.stream_api_key && String(cfg.stream_api_key).trim().length > 0));
     }
+    if (inactiveOnly) {
+      filtered = filtered.filter(cfg => !(cfg.stream_api_key && String(cfg.stream_api_key).trim().length > 0));
+    }
     setFilteredConfigs(filtered);
-  }, [configs, searchTerm, activeOnly]);
-
+  }, [configs, searchTerm, activeOnly, inactiveOnly]);
+  
   // Helper function to check if a row is empty
   const isRowEmpty = (row) => {
     if (!row || typeof row !== 'object') return true;
@@ -579,8 +583,12 @@ const LibraryConfig = () => {
             />
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} />
+            <input type="checkbox" checked={activeOnly} onChange={(e) => { setActiveOnly(e.target.checked); if (e.target.checked) setInactiveOnly(false); }} />
             Active Only
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={inactiveOnly} onChange={(e) => { setInactiveOnly(e.target.checked); if (e.target.checked) setActiveOnly(false); }} />
+            Inactive Only
           </label>
         </div>
       </div>
