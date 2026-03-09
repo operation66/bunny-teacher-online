@@ -6,12 +6,6 @@ from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 import pytz
-# Simple in-memory cache for Bunny libraries list
-_libraries_cache = {
-    "data": None,
-    "fetched_at": None,
-    "ttl_seconds": 300  # 5 minutes — change this number to adjust cache duration
-}
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +22,14 @@ BUNNY_STREAM_API_BASE_URL = "https://video.bunnycdn.com"
 # Bunny.net uses UTC timezone for their dashboard
 BUNNY_TIMEZONE = pytz.UTC
 
+# Simple in-memory cache for Bunny libraries list
+_libraries_cache = {
+    "data": None,
+    "fetched_at": None,
+    "ttl_seconds": 300  # 5 minutes — change this number to adjust cache duration
+}
+
+
 def get_library_api_key(library_id: int, db: Session) -> Optional[str]:
     """
     Get the API key for a specific library from the database
@@ -35,7 +37,7 @@ def get_library_api_key(library_id: int, db: Session) -> Optional[str]:
     """
     if not db:
         return BUNNY_STREAM_API_KEY
-    
+
     try:
         from models import LibraryConfig
         library = db.query(LibraryConfig).filter(LibraryConfig.library_id == library_id).first()
@@ -49,6 +51,7 @@ def get_library_api_key(library_id: int, db: Session) -> Optional[str]:
         logger.error(f"Error retrieving API key for library {library_id}: {str(e)}")
         return BUNNY_STREAM_API_KEY
 
+
 def format_date_for_bunny_api(date_obj: datetime) -> str:
     """
     Format date for Bunny.net API in the exact format they expect: m-d-Y
@@ -59,36 +62,39 @@ def format_date_for_bunny_api(date_obj: datetime) -> str:
         date_obj = BUNNY_TIMEZONE.localize(date_obj)
     elif date_obj.tzinfo != BUNNY_TIMEZONE:
         date_obj = date_obj.astimezone(BUNNY_TIMEZONE)
-    
+
     return date_obj.strftime("%Y-%m-%d")
-    
+
+
 def get_precise_date_range(month: int, year: int):
     """
     Get precise date range for a month with exact start and end times
     Returns dates formatted for Bunny.net API in UTC timezone
     """
     import calendar
-    
+
     # First day of the month at 00:00:00 UTC
     start_date_obj = datetime(year, month, 1, 0, 0, 0, tzinfo=BUNNY_TIMEZONE)
-    
+
     # Last day of the month at 23:59:59 UTC
     last_day = calendar.monthrange(year, month)[1]
     end_date_obj = datetime(year, month, last_day, 23, 59, 59, tzinfo=BUNNY_TIMEZONE)
-    
+
     # Format for Bunny.net API
     start_date = format_date_for_bunny_api(start_date_obj)
     end_date = format_date_for_bunny_api(end_date_obj)
-    
+
     logger.info(f"Precise date range: {start_date} to {end_date} (UTC)")
     return start_date, end_date
+
 
 async def get_bunny_libraries() -> List[Dict]:
     """
     Fetch all video libraries from Bunny.net Stream API
     Returns a list of libraries with their basic information
+    Caches the result for ttl_seconds to avoid hammering the Bunny API
     """
-if not BUNNY_STREAM_API_KEY:
+    if not BUNNY_STREAM_API_KEY:
         logger.error("BUNNY_STREAM_API_KEY not found in environment variables")
         return []
 
@@ -99,7 +105,10 @@ if not BUNNY_STREAM_API_KEY:
         and _libraries_cache["fetched_at"] is not None
         and (now - _libraries_cache["fetched_at"]).total_seconds() < _libraries_cache["ttl_seconds"]
     ):
-        logger.info(f"Returning cached libraries ({len(_libraries_cache['data'])} items, fetched {int((now - _libraries_cache['fetched_at']).total_seconds())}s ago)")
+        age = int((now - _libraries_cache["fetched_at"]).total_seconds())
+        logger.info(
+            f"Returning cached libraries ({len(_libraries_cache['data'])} items, fetched {age}s ago)"
+        )
         return _libraries_cache["data"]
 
     try:
@@ -108,22 +117,22 @@ if not BUNNY_STREAM_API_KEY:
             "Content-Type": "application/json",
             "User-Agent": "Python/httpx"
         }
-        
+
         # Configure client with proper settings for Windows environment
         async with httpx.AsyncClient(
-            verify=True,  # Enable SSL verification
-            timeout=httpx.Timeout(60.0, connect=30.0),  # Separate connect timeout
+            verify=True,
+            timeout=httpx.Timeout(60.0, connect=30.0),
             follow_redirects=True,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         ) as client:
             logger.info("Attempting to connect to Bunny.net API...")
-            
+
             # Try to fetch with a high perPage to minimize pagination
             page = 1
             per_page = 200
             all_items: List[Dict] = []
             total_items = None
-            
+
             while True:
                 try:
                     response = await client.get(
@@ -140,15 +149,12 @@ if not BUNNY_STREAM_API_KEY:
                     break
 
                 data = response.json()
-                # Bunny API may return either a list, or an object with items
                 if isinstance(data, list):
                     items = data
-                    # Accumulate list responses across pages
                     if page == 1:
                         all_items = items
                     else:
                         all_items.extend(items)
-                    # If fewer than per_page, we've reached the end; otherwise continue
                     if len(items) < per_page:
                         break
                     page += 1
@@ -160,39 +166,36 @@ if not BUNNY_STREAM_API_KEY:
                     if not items:
                         break
                     all_items.extend(items)
-                    # Stop if we've retrieved all known items
                     if total_items is not None and len(all_items) >= int(total_items):
                         break
                     page += 1
                 else:
                     logger.error("Unexpected Bunny libraries response format")
                     break
-            
+
             logger.info(f"Successfully collected {len(all_items)} libraries from Bunny.net across pages")
-            
+
             libraries_simplified = []
             for library in all_items:
-                # Support both capitalized and lowercase keys
                 library_id = library.get("Id") if "Id" in library else library.get("id")
                 library_name = library.get("Name") if "Name" in library else library.get("name")
                 if library_name is None:
                     library_name = f"Library {library_id}"
-                
+
                 libraries_simplified.append({
                     "id": library_id,
                     "name": library_name,
                     "original_data": library
                 })
-            
-# Save to cache
+
+            # Save to cache
             _libraries_cache["data"] = libraries_simplified
             _libraries_cache["fetched_at"] = datetime.now(pytz.UTC)
             logger.info(f"Cached {len(libraries_simplified)} libraries")
             return libraries_simplified
-            
-except httpx.ConnectError as e:
+
+    except httpx.ConnectError as e:
         logger.error(f"Failed to connect to Bunny.net API: {str(e)}")
-        # Return stale cache if available rather than empty
         if _libraries_cache["data"] is not None:
             logger.warning("Returning stale cached libraries due to connection error")
             return _libraries_cache["data"]
@@ -209,7 +212,8 @@ except httpx.ConnectError as e:
             logger.warning("Returning stale cached libraries due to error")
             return _libraries_cache["data"]
         return []
-    
+
+
 async def get_library_monthly_stats(library_id: int, month: int, year: int, db: Session = None) -> Dict:
     """
     Get monthly statistics for a specific library using library-specific API key
@@ -218,40 +222,40 @@ async def get_library_monthly_stats(library_id: int, month: int, year: int, db: 
     """
     # Get the appropriate API key for this library
     api_key = get_library_api_key(library_id, db) if db else BUNNY_STREAM_API_KEY
-    
+
     if not api_key:
         logger.error(f"No API key available for library {library_id}")
         return {
             "library_name": f"Library {library_id}",
-            "total_views": 0, 
-            "total_watch_time_seconds": 0, 
+            "total_views": 0,
+            "total_watch_time_seconds": 0,
             "bandwidth_gb": 0.0,
             "views_chart": {},
             "watch_time_chart": {},
             "bandwidth_chart": {},
             "last_updated": None
         }
-    
+
     # Get precise date range with timezone awareness
     start_date, end_date = get_precise_date_range(month, year)
-    
+
     try:
         headers = {
             "AccessKey": api_key,
             "Content-Type": "application/json",
             "User-Agent": "BunnyTeacher/1.0"
         }
-        
+
         params = {
             "dateFrom": start_date,
             "dateTo": end_date,
             "hourly": "false"
         }
-        
+
         async with httpx.AsyncClient(verify=True, timeout=60.0) as client:
             logger.info(f"Making request to: {BUNNY_STREAM_API_BASE_URL}/library/{library_id}/statistics")
             logger.info(f"Precise date range: {start_date} to {end_date} (UTC)")
-            
+
             # First get library info to get the name
             library_name = f"Library {library_id}"
             try:
@@ -264,37 +268,34 @@ async def get_library_monthly_stats(library_id: int, month: int, year: int, db: 
                     library_name = library_data.get("name", f"Library {library_id}")
             except Exception as e:
                 logger.warning(f"Could not fetch library name for {library_id}: {str(e)}")
-            
+
             response = await client.get(
                 f"{BUNNY_STREAM_API_BASE_URL}/library/{library_id}/statistics",
                 headers=headers,
                 params=params
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 logger.info(f"API Response for library {library_id}: {data}")
-                
-                # Extract statistics from the actual API response structure
+
                 views_chart = data.get("viewsChart", {})
                 watch_time_chart = data.get("watchTimeChart", {})
                 bandwidth_chart = data.get("bandwidthChart", {})
-                
-                # Use viewsChart for accurate day-by-day view count (matches dashboard exactly)
+
                 total_views = sum(views_chart.values()) if views_chart else 0
-                
-                # Calculate total watch time in seconds from watchTimeChart
                 total_watch_time_seconds = sum(watch_time_chart.values()) if watch_time_chart else 0
-                
-                # Calculate total bandwidth in GB from bandwidthChart
                 total_bandwidth_bytes = sum(bandwidth_chart.values()) if bandwidth_chart else 0
                 bandwidth_gb = total_bandwidth_bytes / (1024 ** 3) if total_bandwidth_bytes > 0 else 0.0
-                
-                # Add timestamp for data freshness tracking
+
                 last_updated = datetime.now(BUNNY_TIMEZONE).isoformat()
-                
-                logger.info(f"Library {library_id} stats for {month}/{year}: {total_views} views, {total_watch_time_seconds} seconds watch time, {bandwidth_gb:.2f} GB bandwidth")
-                
+
+                logger.info(
+                    f"Library {library_id} stats for {month}/{year}: "
+                    f"{total_views} views, {total_watch_time_seconds} seconds watch time, "
+                    f"{bandwidth_gb:.2f} GB bandwidth"
+                )
+
                 return {
                     "library_name": library_name,
                     "total_views": total_views,
@@ -304,61 +305,62 @@ async def get_library_monthly_stats(library_id: int, month: int, year: int, db: 
                     "watch_time_chart": watch_time_chart,
                     "bandwidth_chart": bandwidth_chart,
                     "last_updated": last_updated,
-                    "raw_data": data  # Include raw data for debugging
+                    "raw_data": data
                 }
             else:
                 logger.error(f"Failed to fetch stats for library {library_id}: {response.status_code} - {response.text}")
                 return {
                     "library_name": library_name,
-                    "total_views": 0, 
-                    "total_watch_time_seconds": 0, 
+                    "total_views": 0,
+                    "total_watch_time_seconds": 0,
                     "bandwidth_gb": 0.0,
                     "views_chart": {},
                     "watch_time_chart": {},
                     "bandwidth_chart": {},
-                    "last_updated": None, 
+                    "last_updated": None,
                     "error": response.text
                 }
-                
+
     except httpx.ConnectError as e:
         logger.error(f"Failed to connect to Bunny.net API for library {library_id}: {str(e)}")
         return {
             "library_name": f"Library {library_id}",
-            "total_views": 0, 
-            "total_watch_time_seconds": 0, 
+            "total_views": 0,
+            "total_watch_time_seconds": 0,
             "bandwidth_gb": 0.0,
             "views_chart": {},
             "watch_time_chart": {},
             "bandwidth_chart": {},
-            "last_updated": None, 
+            "last_updated": None,
             "error": str(e)
         }
     except httpx.TimeoutException as e:
         logger.error(f"Request timeout to Bunny.net API for library {library_id}: {str(e)}")
         return {
             "library_name": f"Library {library_id}",
-            "total_views": 0, 
-            "total_watch_time_seconds": 0, 
+            "total_views": 0,
+            "total_watch_time_seconds": 0,
             "bandwidth_gb": 0.0,
             "views_chart": {},
             "watch_time_chart": {},
             "bandwidth_chart": {},
-            "last_updated": None, 
+            "last_updated": None,
             "error": str(e)
         }
     except Exception as e:
         logger.error(f"Unexpected error fetching stats for library {library_id}: {str(e)}")
         return {
             "library_name": f"Library {library_id}",
-            "total_views": 0, 
-            "total_watch_time_seconds": 0, 
+            "total_views": 0,
+            "total_watch_time_seconds": 0,
             "bandwidth_gb": 0.0,
             "views_chart": {},
             "watch_time_chart": {},
             "bandwidth_chart": {},
-            "last_updated": None, 
+            "last_updated": None,
             "error": str(e)
         }
+
 
 async def get_bunny_stats(library_id: int, start_date: str, end_date: str) -> Dict:
     """
@@ -366,22 +368,9 @@ async def get_bunny_stats(library_id: int, start_date: str, end_date: str) -> Di
     Returns only accurate view counts and watch time from the Stream API
     Uses precise timezone-aware formatting
     """
-if not BUNNY_STREAM_API_KEY:
+    if not BUNNY_STREAM_API_KEY:
         logger.error("BUNNY_STREAM_API_KEY not found in environment variables")
-        return []
-
-    # Return cached data if still fresh
-    now = datetime.now(pytz.UTC)
-    if (
-        _libraries_cache["data"] is not None
-        and _libraries_cache["fetched_at"] is not None
-        and (now - _libraries_cache["fetched_at"]).total_seconds() < _libraries_cache["ttl_seconds"]
-    ):
-        logger.info(
-            f"Returning cached libraries ({len(_libraries_cache['data'])} items, "
-            f"fetched {int((now - _libraries_cache['fetched_at']).total_seconds())}s ago)"
-        )
-        return _libraries_cache["data"]
+        return {"total_views": 0, "total_watch_time_seconds": 0, "last_updated": None}
 
     try:
         headers = {
@@ -389,48 +378,40 @@ if not BUNNY_STREAM_API_KEY:
             "Content-Type": "application/json",
             "User-Agent": "BunnyTeacher/1.0"
         }
-        
+
         # Convert dates to proper format if they're in YYYY-MM-DD format
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-            
-            # Convert to Bunny.net format
             start_date = format_date_for_bunny_api(start_dt)
             end_date = format_date_for_bunny_api(end_dt)
         except ValueError:
-            # Assume dates are already in correct format
             pass
-        
+
         params = {
             "dateFrom": start_date,
             "dateTo": end_date,
             "hourly": "false"
         }
-        
+
         async with httpx.AsyncClient(verify=True, timeout=30.0) as client:
             response = await client.get(
                 f"{BUNNY_STREAM_API_BASE_URL}/library/{library_id}/statistics",
                 headers=headers,
                 params=params
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
-                
-                # Extract statistics from the actual API response structure
+
                 views_chart = data.get("viewsChart", {})
                 watch_time_chart = data.get("watchTimeChart", {})
-                
-                # Use viewsChart for accurate day-by-day view count (matches dashboard exactly)
+
                 total_views = sum(views_chart.values()) if views_chart else 0
-                
-                # Calculate total watch time in seconds from watchTimeChart
                 total_watch_time_seconds = sum(watch_time_chart.values()) if watch_time_chart else 0
-                
-                # Add timestamp for data freshness tracking
+
                 last_updated = datetime.now(BUNNY_TIMEZONE).isoformat()
-                
+
                 return {
                     "total_views": total_views,
                     "total_watch_time_seconds": total_watch_time_seconds,
@@ -439,7 +420,7 @@ if not BUNNY_STREAM_API_KEY:
             else:
                 logger.error(f"Failed to fetch stats for library {library_id}: {response.status_code} - {response.text}")
                 return {"total_views": 0, "total_watch_time_seconds": 0, "last_updated": None}
-                
+
     except Exception as e:
         logger.error(f"Error fetching stats for library {library_id}: {str(e)}")
         return {"total_views": 0, "total_watch_time_seconds": 0, "last_updated": None}
