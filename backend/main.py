@@ -650,7 +650,35 @@ async def sync_library_configs_from_bunny(db: Session = Depends(get_db), current
     except Exception as e:
         logger.error(f"Error syncing library configs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to sync library configurations: {str(e)}")
+# ============================================
+# CACHE MANAGEMENT
+# ============================================
 
+@app.post("/cache/clear-libraries")
+async def clear_libraries_cache(current_user: models.User = Depends(get_current_user)):
+    """Force the next libraries fetch to go directly to Bunny API"""
+    from bunny_service import _libraries_cache
+    _libraries_cache["data"] = None
+    _libraries_cache["fetched_at"] = None
+    logger.info(f"Libraries cache cleared by user {current_user.email}")
+    return {"success": True, "message": "Cache cleared. Next fetch will go directly to Bunny API."}
+
+@app.get("/cache/status")
+async def get_cache_status(current_user: models.User = Depends(get_current_user)):
+    """Check if cached data is available and how old it is"""
+    from bunny_service import _libraries_cache
+    import pytz
+    now = datetime.now(pytz.UTC)
+    if _libraries_cache["data"] is None:
+        return {"cached": False, "libraries_count": 0, "age_seconds": None}
+    age = int((now - _libraries_cache["fetched_at"]).total_seconds()) if _libraries_cache["fetched_at"] else None
+    return {
+        "cached": True,
+        "libraries_count": len(_libraries_cache["data"]),
+        "age_seconds": age,
+        "ttl_seconds": _libraries_cache["ttl_seconds"],
+        "expires_in_seconds": max(0, _libraries_cache["ttl_seconds"] - age) if age is not None else None
+    }
 
 # ============================================
 # ROOT
