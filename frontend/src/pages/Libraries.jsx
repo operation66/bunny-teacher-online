@@ -50,15 +50,16 @@ const Libraries = () => {
     statsCount: true
   });
 
-  // EDIT 3C: Watch time format state per library
+  // Watch time format state per library
   const [watchTimeFormats, setWatchTimeFormats] = useState({});
+
   // API Tester state
   const [showApiTester, setShowApiTester] = useState(false);
   const [apiTestRunning, setApiTestRunning] = useState(false);
   const [apiTestLogs, setApiTestLogs] = useState([]);
   const [apiTestSummary, setApiTestSummary] = useState(null);
 
-  // EDIT 4: Selection and export modal states
+  // Selection and export modal states
   const [selectedLibraries, setSelectedLibraries] = useState(new Set());
   const [showExportModal, setShowExportModal] = useState(false);
 
@@ -130,6 +131,7 @@ const Libraries = () => {
 
     setApiTestRunning(false);
   };
+
   const showMessage = (text, type = 'success') => {
     setMessage({ text, type });
     setTimeout(() => setMessage({ text: '', type: '' }), 5000);
@@ -137,7 +139,7 @@ const Libraries = () => {
 
   const baseCacheRef = React.useRef(null);
 
-const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
+  const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
     setLoading(true);
     try {
       if (forceReload) {
@@ -154,7 +156,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
         baseCacheRef.current = baseData;
         libraryCache.set(baseData);
       }
-      
+
       const baseMap = new Map();
       baseData.forEach(lib => {
         baseMap.set(lib.id, {
@@ -277,7 +279,6 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
     });
   };
 
-  // EDIT 4B: Toggle library selection
   const toggleLibrarySelection = (libraryId, event) => {
     event.stopPropagation();
     setSelectedLibraries(prev => {
@@ -296,24 +297,20 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
     return new Intl.NumberFormat().format(num);
   };
 
-  // EDIT 3C: Updated formatWatchTime with format parameter
   const formatWatchTime = (seconds, format = 'minutes') => {
     if (!seconds && seconds !== 0) return 'N/A';
     
     if (format === 'hms') {
-      // Hours:Minutes:Seconds format
       const hours = Math.floor(seconds / 3600);
       const minutes = Math.floor((seconds % 3600) / 60);
       const secs = seconds % 60;
       return `${hours}h ${minutes}m ${secs}s`;
     } else {
-      // Default: total minutes
       const totalMinutes = Math.round(seconds / 60);
       return `${totalMinutes.toLocaleString()} min`;
     }
   };
 
-  // EDIT 3C: Toggle watch time format for a library
   const toggleWatchTimeFormat = (libraryId) => {
     setWatchTimeFormats(prev => ({
       ...prev,
@@ -365,12 +362,10 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
       });
   }, [libraries, searchTerm, sortBy, sortOrder, showOnlyWithStats]);
 
-  // EDIT 4: Show export modal
   const handleExportClick = () => {
     setShowExportModal(true);
   };
 
-  // EDIT 4C: Updated export function with both time formats and selection
   const exportLibraries = (exportSelected) => {
     try {
       const toExport = exportSelected 
@@ -393,7 +388,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
         };
 
         if (library.monthly_data && library.monthly_data.length > 0) {
-          library.monthly_data.forEach((monthData, index) => {
+          library.monthly_data.forEach((monthData) => {
             const monthKey = `${getMonthName(monthData.month)} ${monthData.year}`;
             baseData[`${monthKey} - Views`] = formatNumber(monthData.total_views);
             baseData[`${monthKey} - Watch Time (Minutes)`] = formatWatchTime(monthData.total_watch_time_seconds, 'minutes');
@@ -613,6 +608,15 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                 </div>
               </div>
 
+              {/* API Tester Button */}
+              <Button
+                onClick={() => setShowApiTester(v => !v)}
+                className={`h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 transition-all ${showApiTester ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+              >
+                <span>🧪</span>
+                API Tester
+              </Button>
+
               {/* Export Button */}
               <Button 
                 onClick={handleExportClick} 
@@ -622,7 +626,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                 Export Excel
               </Button>
 
-              {/* EDIT 1: Refresh Button - Blue with white text for visibility */}
+              {/* Refresh Button */}
               <Button 
                 onClick={() => fetchLibrariesWithHistory(showOnlyWithStats, true)} 
                 disabled={loading} 
@@ -631,9 +635,87 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
               >
                 <RefreshCw className={`w-4 h-4 transition-transform duration-300 ${loading ? 'animate-spin' : 'group-hover:rotate-90'}`} />
                 Refresh (Live)
-              </Button>            </div>
+              </Button>
+            </div>
           </div>
         </div>
+
+        {/* API Tester Panel */}
+        {showApiTester && (
+          <div className="bg-white rounded-[12px] shadow-sm mb-5 border border-blue-200">
+            <div className="px-6 py-4 border-b border-blue-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-[18px]">🧪</span>
+                <span className="text-[16px] font-bold text-slate-800">Bunny API Connection Tester</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={runApiTest}
+                  disabled={apiTestRunning}
+                  className="h-[34px] px-4 rounded-[7px] text-[13px] font-medium bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  {apiTestRunning ? (
+                    <><RefreshCw className="w-3 h-3 mr-1 animate-spin inline" /> Running...</>
+                  ) : '▶ Run Test'}
+                </Button>
+                <button
+                  onClick={() => setShowApiTester(false)}
+                  className="w-[28px] h-[28px] flex items-center justify-center rounded-[6px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors text-[18px] leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-4">
+              {apiTestLogs.length === 0 && !apiTestRunning && (
+                <div className="text-center py-8 text-slate-400 text-[14px]">
+                  Click <strong>▶ Run Test</strong> to check your Bunny API connection and see live logs
+                </div>
+              )}
+              {apiTestLogs.length > 0 && (
+                <div className="bg-slate-950 rounded-[8px] p-4 mb-4 space-y-1 font-mono text-[13px] max-h-[260px] overflow-y-auto">
+                  {apiTestLogs.map((log, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <span className="text-slate-500 text-[11px] mt-[2px] min-w-[64px] shrink-0">{log.time}</span>
+                      <span className={
+                        log.type === 'error'   ? 'text-red-400' :
+                        log.type === 'success' ? 'text-green-400' :
+                        log.type === 'warning' ? 'text-amber-400' :
+                        'text-slate-300'
+                      }>
+                        {log.msg}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {apiTestSummary && (
+                <div className={`p-4 rounded-[8px] border ${apiTestSummary.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                  {apiTestSummary.success ? (
+                    <div className="flex flex-wrap items-center gap-4">
+                      <span className="text-green-800 text-[14px] font-semibold">
+                        ✅ Connection healthy
+                      </span>
+                      <span className="text-green-700 text-[13px] bg-green-100 px-2 py-0.5 rounded">
+                        {apiTestSummary.libCount} libraries
+                      </span>
+                      <span className="text-green-700 text-[13px] bg-green-100 px-2 py-0.5 rounded">
+                        responded in {apiTestSummary.elapsed}ms
+                      </span>
+                      <span className="text-green-700 text-[13px] bg-green-100 px-2 py-0.5 rounded">
+                        {apiTestSummary.withData} with monthly data
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-red-800 text-[14px] font-semibold">
+                      ❌ Connection issue — {apiTestSummary.error}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Content Grid */}
         {loading ? (
@@ -675,7 +757,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                 boxShadow: `${!atTop ? 'inset 0 8px 8px -8px rgba(0,0,0,0.1)' : ''}${(!atTop && !atBottom) ? ',' : ''}${!atBottom ? 'inset 0 -8px 8px -8px rgba(0,0,0,0.1)' : ''}`
               }}
             >
-              {/* EDIT 2: Table Header with proper alignment */}
+              {/* Table Header */}
               <div className="sticky top-0 z-10" style={{background:'#f8fafc', borderBottom:'2px solid #e2e8f0', height:'48px'}}>
                 <div className="flex items-center" style={{padding:'0 24px'}}>
                   <div style={{width:'50px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
@@ -708,7 +790,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                 return (
                   <div key={library.library_id}>
                     <div
-                      className={`transition-all duration-150 cursor-pointer hover:translate-x-[2px]`}
+                      className="transition-all duration-150 cursor-pointer hover:translate-x-[2px]"
                       style={{
                         height: '64px',
                         padding: '0 24px',
@@ -718,7 +800,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                       onClick={() => toggleLibraryExpansion(library.library_id)}
                     >
                       <div className="flex items-center h-full">
-                        {/* EDIT 4B: Functional Selection Checkbox */}
+                        {/* Selection Checkbox */}
                         <div style={{width:'50px'}} className="flex items-center justify-center">
                           <button
                             onClick={(e) => toggleLibrarySelection(library.library_id, e)}
@@ -822,7 +904,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
 
                         {/* Monthly Performance Analytics */}
                         <div className="mt-6">
-                          {/* EDIT 3C: Header with Format Toggle Button */}
+                          {/* Header with Format Toggle Button */}
                           <div
                             className="flex items-center justify-between text-white rounded-t-[12px] shadow-[0_4px_6px_rgba(99,102,241,0.2)]"
                             style={{background: 'linear-gradient(90deg,#6366f1,#4f46e5)', padding:'16px 24px'}}
@@ -841,7 +923,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                           </div>
 
                           <div className="bg-white rounded-b-[12px] overflow-hidden">
-                            {/* EDIT 3A: Fixed Headers Alignment */}
+                            {/* Fixed Headers */}
                             <div className="sticky top-0" style={{background:'#f8fafc', borderBottom:'2px solid #e2e8f0', height:'44px'}}>
                               <div className="flex items-center" style={{padding:'0 24px'}}>
                                 <div className="uppercase tracking-[0.5px] text-[13px] font-semibold text-[#475569]" style={{width:'40%'}}>Period</div>
@@ -850,7 +932,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                               </div>
                             </div>
 
-                            {/* EDIT 3B: Data rows sorted by period (already correct) */}
+                            {/* Data rows sorted by period */}
                             {library.monthly_data
                               .sort((a, b) => {
                                 if (a.year !== b.year) return b.year - a.year;
@@ -875,7 +957,6 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
                                       <span className="text-[16px]" style={{color:'#10b981'}}>👁️</span>
                                       <span className="text-[18px] font-bold text-[#1e293b]">{formatNumber(monthData.total_views)}</span>
                                     </div>
-                                    {/* EDIT 3C: Watch time with dynamic format */}
                                     <div style={{width:'30%'}} className="flex items-center gap-2">
                                       <span className="text-[16px]" style={{color:'#f59e0b'}}>⏱️</span>
                                       <span className="text-[15px] font-semibold text-[#1e293b]">
@@ -897,7 +978,7 @@ const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = fa
         )}
       </div>
 
-      {/* EDIT 4: Export Confirmation Modal */}
+      {/* Export Confirmation Modal */}
       {showExportModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
