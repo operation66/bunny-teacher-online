@@ -6,6 +6,12 @@ from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 import pytz
+# Simple in-memory cache for Bunny libraries list
+_libraries_cache = {
+    "data": None,
+    "fetched_at": None,
+    "ttl_seconds": 300  # 5 minutes — change this number to adjust cache duration
+}
 
 # Load environment variables
 load_dotenv()
@@ -82,10 +88,20 @@ async def get_bunny_libraries() -> List[Dict]:
     Fetch all video libraries from Bunny.net Stream API
     Returns a list of libraries with their basic information
     """
-    if not BUNNY_STREAM_API_KEY:
+if not BUNNY_STREAM_API_KEY:
         logger.error("BUNNY_STREAM_API_KEY not found in environment variables")
         return []
-    
+
+    # Return cached data if still fresh
+    now = datetime.now(pytz.UTC)
+    if (
+        _libraries_cache["data"] is not None
+        and _libraries_cache["fetched_at"] is not None
+        and (now - _libraries_cache["fetched_at"]).total_seconds() < _libraries_cache["ttl_seconds"]
+    ):
+        logger.info(f"Returning cached libraries ({len(_libraries_cache['data'])} items, fetched {int((now - _libraries_cache['fetched_at']).total_seconds())}s ago)")
+        return _libraries_cache["data"]
+
     try:
         headers = {
             "AccessKey": BUNNY_STREAM_API_KEY,
@@ -168,18 +184,32 @@ async def get_bunny_libraries() -> List[Dict]:
                     "original_data": library
                 })
             
+# Save to cache
+            _libraries_cache["data"] = libraries_simplified
+            _libraries_cache["fetched_at"] = datetime.now(pytz.UTC)
+            logger.info(f"Cached {len(libraries_simplified)} libraries")
             return libraries_simplified
-                
-    except httpx.ConnectError as e:
+            
+except httpx.ConnectError as e:
         logger.error(f"Failed to connect to Bunny.net API: {str(e)}")
+        # Return stale cache if available rather than empty
+        if _libraries_cache["data"] is not None:
+            logger.warning("Returning stale cached libraries due to connection error")
+            return _libraries_cache["data"]
         return []
     except httpx.TimeoutException as e:
         logger.error(f"Request timeout to Bunny.net API: {str(e)}")
+        if _libraries_cache["data"] is not None:
+            logger.warning("Returning stale cached libraries due to timeout")
+            return _libraries_cache["data"]
         return []
     except Exception as e:
         logger.error(f"Unexpected error fetching libraries: {str(e)}")
+        if _libraries_cache["data"] is not None:
+            logger.warning("Returning stale cached libraries due to error")
+            return _libraries_cache["data"]
         return []
-
+    
 async def get_library_monthly_stats(library_id: int, month: int, year: int, db: Session = None) -> Dict:
     """
     Get monthly statistics for a specific library using library-specific API key
