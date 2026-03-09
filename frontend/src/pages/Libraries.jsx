@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import api from '../services/api';
+import { libraryCache } from '../services/libraryCache';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -51,6 +52,11 @@ const Libraries = () => {
 
   // EDIT 3C: Watch time format state per library
   const [watchTimeFormats, setWatchTimeFormats] = useState({});
+  // API Tester state
+  const [showApiTester, setShowApiTester] = useState(false);
+  const [apiTestRunning, setApiTestRunning] = useState(false);
+  const [apiTestLogs, setApiTestLogs] = useState([]);
+  const [apiTestSummary, setApiTestSummary] = useState(null);
 
   // EDIT 4: Selection and export modal states
   const [selectedLibraries, setSelectedLibraries] = useState(new Set());
@@ -73,6 +79,57 @@ const Libraries = () => {
     setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
   }, [loading]);
 
+  const runApiTest = async () => {
+    setApiTestRunning(true);
+    setApiTestLogs([]);
+    setApiTestSummary(null);
+    const logs = [];
+
+    const log = (msg, type = 'info') => {
+      const entry = { msg, type, time: new Date().toLocaleTimeString() };
+      logs.push(entry);
+      setApiTestLogs([...logs]);
+    };
+
+    try {
+      log('🔍 Checking cache status...', 'info');
+      const cacheRes = await api.get('/cache/status');
+      const cs = cacheRes.data;
+      if (cs.cached) {
+        log(`✅ Cache HIT — ${cs.libraries_count} libraries cached, ${cs.age_seconds}s old, expires in ${cs.expires_in_seconds}s`, 'success');
+      } else {
+        log('⚠️ Cache MISS — next call will fetch live from Bunny API', 'warning');
+      }
+
+      log('📡 Calling /bunny-libraries/ endpoint...', 'info');
+      const t0 = Date.now();
+      const libRes = await api.get('/bunny-libraries/');
+      const elapsed = Date.now() - t0;
+      const libs = libRes.data;
+      log(`✅ Response received in ${elapsed}ms — ${libs.length} libraries returned`, 'success');
+
+      if (libs.length > 0) {
+        log(`📚 Sample libraries: ${libs.slice(0, 3).map(l => `"${l.name}" (ID: ${l.id})`).join(', ')}`, 'info');
+      }
+
+      log('📊 Checking historical stats endpoint...', 'info');
+      const t1 = Date.now();
+      const statsRes = await api.get('/historical-stats/libraries/');
+      const elapsed2 = Date.now() - t1;
+      log(`✅ Historical stats received in ${elapsed2}ms — ${statsRes.data.length} entries`, 'success');
+
+      const withData = statsRes.data.filter(l => l.monthly_data?.length > 0).length;
+      log(`📈 Libraries with monthly data: ${withData} / ${statsRes.data.length}`, 'info');
+
+      log('✅ All checks passed — Bunny API is responding correctly', 'success');
+      setApiTestSummary({ success: true, libCount: libs.length, elapsed, statsCount: statsRes.data.length, withData });
+    } catch (err) {
+      log(`❌ Error: ${err.response?.data?.detail || err.message}`, 'error');
+      setApiTestSummary({ success: false, error: err.message });
+    }
+
+    setApiTestRunning(false);
+  };
   const showMessage = (text, type = 'success') => {
     setMessage({ text, type });
     setTimeout(() => setMessage({ text: '', type: '' }), 5000);
@@ -80,20 +137,24 @@ const Libraries = () => {
 
   const baseCacheRef = React.useRef(null);
 
-  const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
+const fetchLibrariesWithHistory = async (withStatsOnly = false, forceReload = false) => {
     setLoading(true);
     try {
       if (forceReload) {
         baseCacheRef.current = null;
+        libraryCache.clear();
+        // Tell backend to clear its cache too so Bunny API is actually called
+        try { await api.post('/cache/clear-libraries'); } catch (_) {}
       }
       
-      let baseData = baseCacheRef.current;
+      let baseData = baseCacheRef.current || libraryCache.get();
       if (!baseData) {
         const { data: baseDataResp } = await api.get('/bunny-libraries/');
         baseData = baseDataResp;
         baseCacheRef.current = baseData;
+        libraryCache.set(baseData);
       }
-
+      
       const baseMap = new Map();
       baseData.forEach(lib => {
         baseMap.set(lib.id, {
@@ -566,11 +627,11 @@ const Libraries = () => {
                 onClick={() => fetchLibrariesWithHistory(showOnlyWithStats, true)} 
                 disabled={loading} 
                 className="group h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700 transition-all"
+                title="Force refresh from Bunny API (bypasses 5-min cache)"
               >
                 <RefreshCw className={`w-4 h-4 transition-transform duration-300 ${loading ? 'animate-spin' : 'group-hover:rotate-90'}`} />
-                Refresh
-              </Button>
-            </div>
+                Refresh (Live)
+              </Button>            </div>
           </div>
         </div>
 
