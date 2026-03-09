@@ -148,9 +148,13 @@ const Libraries = () => {
         // Tell backend to clear its cache too so Bunny API is actually called
         try { await api.post('/cache/clear-libraries'); } catch (_) {}
       }
-      
+
       let baseData = baseCacheRef.current || libraryCache.get();
+      if (baseData) {
+        console.log(`[LibCache] HIT — ${baseData.length} libraries from cache`);
+      }
       if (!baseData) {
+        console.log('[LibCache] MISS — fetching from backend');
         const { data: baseDataResp } = await api.get('/bunny-libraries/');
         baseData = baseDataResp;
         baseCacheRef.current = baseData;
