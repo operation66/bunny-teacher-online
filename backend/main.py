@@ -662,6 +662,12 @@ async def sync_library_configs_from_bunny(db: Session = Depends(get_db), current
 # ============================================
 # CACHE MANAGEMENT
 # ============================================
+_historical_stats_cache = {
+    "data": None,
+    "fetched_at": None,
+    "ttl_seconds": 600,
+    "cache_key": None
+}
 
 @app.post("/cache/clear-libraries")
 async def clear_libraries_cache(current_user: models.User = Depends(get_current_user)):
@@ -669,9 +675,12 @@ async def clear_libraries_cache(current_user: models.User = Depends(get_current_
     from bunny_service import _libraries_cache
     _libraries_cache["data"] = None
     _libraries_cache["fetched_at"] = None
-    logger.info(f"Libraries cache cleared by user {current_user.email}")
+    _historical_stats_cache["data"] = None
+    _historical_stats_cache["fetched_at"] = None
+    _historical_stats_cache["cache_key"] = None
+    logger.info(f"Libraries + historical stats cache cleared by user {current_user.email}")
     return {"success": True, "message": "Cache cleared. Next fetch will go directly to Bunny API."}
-
+    
 @app.get("/cache/status")
 async def get_cache_status(current_user: models.User = Depends(get_current_user)):
     """Check if cached data is available and how old it is"""
@@ -898,6 +907,22 @@ async def sync_historical_stats(request: schemas.SyncRequest, db: Session = Depe
 @app.get("/historical-stats/libraries/", response_model=List[schemas.LibraryWithHistory])
 async def get_libraries_with_history(with_stats_only: bool = False, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     try:
+        import pytz as _pytz
+        now = datetime.now(_pytz.UTC)
+        cache_key = f"with_stats_{with_stats_only}"
+
+        if (
+            _historical_stats_cache["data"] is not None
+            and _historical_stats_cache["fetched_at"] is not None
+            and _historical_stats_cache.get("cache_key") == cache_key
+            and (now - _historical_stats_cache["fetched_at"]).total_seconds() < _historical_stats_cache["ttl_seconds"]
+        ):
+            age = int((now - _historical_stats_cache["fetched_at"]).total_seconds())
+            logger.info(f"[HistoricalStatsCache] HIT — {len(_historical_stats_cache['data'])} entries, {age}s old")
+            return _historical_stats_cache["data"]
+
+        logger.info(f"[HistoricalStatsCache] MISS — querying database (with_stats_only={with_stats_only})")
+
         libraries_query = db.query(
             models.LibraryHistoricalStats.library_id,
             models.LibraryHistoricalStats.library_name
@@ -910,34 +935,36 @@ async def get_libraries_with_history(with_stats_only: bool = False, db: Session 
 
         if not unique_libraries and not with_stats_only:
             bunny_libraries = await get_bunny_libraries()
-            return [schemas.LibraryWithHistory(
+            result = [schemas.LibraryWithHistory(
                 library_id=lib.get("id"), library_name=lib.get("name"),
                 has_stats=False, monthly_data=[], last_updated=None
             ) for lib in bunny_libraries]
+            _historical_stats_cache["data"] = result
+            _historical_stats_cache["fetched_at"] = datetime.now(_pytz.UTC)
+            _historical_stats_cache["cache_key"] = cache_key
+            return result
 
         config_names = {cfg.library_id: cfg.library_name for cfg in db.query(models.LibraryConfig).all()}
 
+        # Fetch ALL historical stats in ONE query — fixes the 104s N+1 problem
+        all_stats = db.query(models.LibraryHistoricalStats).order_by(
+            models.LibraryHistoricalStats.library_id,
+            models.LibraryHistoricalStats.year.desc(),
+            models.LibraryHistoricalStats.month.desc()
+        ).all()
+
+        stats_by_library = {}
+        for stat in all_stats:
+            stats_by_library.setdefault(stat.library_id, []).append(stat)
+
         result = []
+        teachers_to_upsert = []
+
         for lib_id, lib_name in unique_libraries:
-            try:
-                teacher = db.query(models.Teacher).filter(models.Teacher.bunny_library_id == lib_id).first()
-                preferred_name = config_names.get(lib_id) or lib_name
-                if teacher:
-                    if preferred_name and teacher.name != preferred_name:
-                        teacher.name = preferred_name
-                else:
-                    db.add(models.Teacher(name=preferred_name or f"Library {lib_id}", bunny_library_id=lib_id))
-                db.flush()
-            except Exception as upsert_err:
-                logger.error(f"Teacher upsert during history retrieval failed for library {lib_id}: {str(upsert_err)}")
+            preferred_name = config_names.get(lib_id) or lib_name
+            teachers_to_upsert.append((lib_id, preferred_name))
 
-            monthly_stats = db.query(models.LibraryHistoricalStats).filter(
-                models.LibraryHistoricalStats.library_id == lib_id
-            ).order_by(
-                models.LibraryHistoricalStats.year.desc(),
-                models.LibraryHistoricalStats.month.desc()
-            ).all()
-
+            monthly_stats = stats_by_library.get(lib_id, [])
             monthly_data = []
             last_updated = None
             latest_name = lib_name
@@ -949,7 +976,7 @@ async def get_libraries_with_history(with_stats_only: bool = False, db: Session 
                     total_watch_time_seconds=stats.total_watch_time_seconds,
                     bandwidth_gb=stats.bandwidth_gb, fetch_date=stats.fetch_date
                 ))
-                if not last_updated or stats.fetch_date > last_updated:
+                if not last_updated or (stats.fetch_date and stats.fetch_date > last_updated):
                     last_updated = stats.fetch_date
                     if stats.library_name:
                         latest_name = stats.library_name
@@ -961,12 +988,31 @@ async def get_libraries_with_history(with_stats_only: bool = False, db: Session 
                 monthly_data=monthly_data, last_updated=last_updated
             ))
 
+        # Batch teacher upserts — no more flush inside loop
+        try:
+            existing_teachers = {t.bunny_library_id: t for t in db.query(models.Teacher).all()}
+            for lib_id, preferred_name in teachers_to_upsert:
+                teacher = existing_teachers.get(lib_id)
+                if teacher:
+                    if preferred_name and teacher.name != preferred_name:
+                        teacher.name = preferred_name
+                else:
+                    db.add(models.Teacher(name=preferred_name or f"Library {lib_id}", bunny_library_id=lib_id))
+            db.commit()
+        except Exception as upsert_err:
+            db.rollback()
+            logger.warning(f"Teacher batch upsert failed (non-fatal): {str(upsert_err)}")
+
+        _historical_stats_cache["data"] = result
+        _historical_stats_cache["fetched_at"] = datetime.now(_pytz.UTC)
+        _historical_stats_cache["cache_key"] = cache_key
+        logger.info(f"[HistoricalStatsCache] Cached {len(result)} libraries")
+
         return result
 
     except Exception as e:
         logger.error(f"Get libraries with history error: {str(e)}")
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
-
 
 # ============================================
 # STAGE ENDPOINTS
