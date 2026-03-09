@@ -104,6 +104,15 @@ except Exception as e:
 # Create FastAPI app
 app = FastAPI(title="Elkheta Teacher Performance Dashboard")
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        logger.info("🚀 Startup: Pre-warming Bunny libraries cache...")
+        libs = await get_bunny_libraries()
+        logger.info(f"✅ Startup cache ready: {len(libs)} libraries loaded")
+    except Exception as e:
+        logger.warning(f"⚠️ Startup cache pre-warm failed (non-fatal): {e}")
+        
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
