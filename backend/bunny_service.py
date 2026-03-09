@@ -26,7 +26,7 @@ BUNNY_TIMEZONE = pytz.UTC
 _libraries_cache = {
     "data": None,
     "fetched_at": None,
-    "ttl_seconds": 300  # 5 minutes — change this number to adjust cache duration
+    "ttl_seconds": 1800  # 5 minutes — change this number to adjust cache duration
 }
 
 
@@ -121,7 +121,7 @@ async def get_bunny_libraries() -> List[Dict]:
         # Configure client with proper settings for Windows environment
         async with httpx.AsyncClient(
             verify=True,
-            timeout=httpx.Timeout(60.0, connect=30.0),
+            timeout=httpx.Timeout(120.0, connect=60.0),
             follow_redirects=True,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
         ) as client:
