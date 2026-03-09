@@ -366,10 +366,23 @@ async def get_bunny_stats(library_id: int, start_date: str, end_date: str) -> Di
     Returns only accurate view counts and watch time from the Stream API
     Uses precise timezone-aware formatting
     """
-    if not BUNNY_STREAM_API_KEY:
+if not BUNNY_STREAM_API_KEY:
         logger.error("BUNNY_STREAM_API_KEY not found in environment variables")
-        return {"total_views": 0, "total_watch_time_seconds": 0, "last_updated": None}
-    
+        return []
+
+    # Return cached data if still fresh
+    now = datetime.now(pytz.UTC)
+    if (
+        _libraries_cache["data"] is not None
+        and _libraries_cache["fetched_at"] is not None
+        and (now - _libraries_cache["fetched_at"]).total_seconds() < _libraries_cache["ttl_seconds"]
+    ):
+        logger.info(
+            f"Returning cached libraries ({len(_libraries_cache['data'])} items, "
+            f"fetched {int((now - _libraries_cache['fetched_at']).total_seconds())}s ago)"
+        )
+        return _libraries_cache["data"]
+
     try:
         headers = {
             "AccessKey": BUNNY_STREAM_API_KEY,
