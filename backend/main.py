@@ -1737,44 +1737,52 @@ async def auto_link_teacher_profiles(
         raise HTTPException(status_code=500, detail=f"Auto-link failed: {str(e)}")
 
 
-@app.get("/teacher-profiles/unlinked", response_model=List[UnlinkedAssignment])
-def get_unlinked_assignments(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    """Returns all assignments that have no teacher_profile_id linked."""
-    assignments = db.query(TeacherAssignment).filter(
+@app.get("/teacher-profiles/unlinked")
+async def get_unlinked_assignments(db: Session = Depends(get_db)):
+    rows = db.query(TeacherAssignment).filter(
         TeacherAssignment.teacher_profile_id == None
     ).all()
-    result = []
-    for a in assignments:
-        _, _, _, teacher_code, _ = parse_library_name(a.library_name)
-        result.append(UnlinkedAssignment(
-            library_id=a.library_id,
-            library_name=a.library_name,
-            reason="no_p_code" if not teacher_code else "p_code_not_in_db"
-        ))
-    return result
 
+    # Deduplicate by library_id — keep only one row per library
+    seen = {}
+    for row in rows:
+        if row.library_id not in seen:
+            # Determine reason
+            p_match = re.search(r'[Pp](\d{4})', row.library_name or '')
+            if not p_match:
+                reason = 'no_p_code'
+            else:
+                reason = 'profile_not_found'
+            seen[row.library_id] = {
+                "library_id": row.library_id,
+                "library_name": row.library_name,
+                "reason": reason,
+            }
+
+    return list(seen.values())
 
 @app.put("/teacher-assignments/{assignment_id}/link-profile")
-def manually_link_profile(
+async def link_teacher_profile(
     assignment_id: int,
-    body: dict,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    payload: dict,
+    db: Session = Depends(get_db)
 ):
-    """Manually link an assignment to a teacher profile."""
-    a = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
-    if not a:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    profile_id = body.get("teacher_profile_id")
+    profile_id = payload.get("teacher_profile_id")
     if not profile_id:
         raise HTTPException(status_code=400, detail="teacher_profile_id required")
-    a.teacher_profile_id = profile_id
-    db.commit()
-    return {"success": True}
 
+    # Find the target assignment to get its library_id
+    target = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # Link ALL assignments with the same library_id
+    db.query(TeacherAssignment).filter(
+        TeacherAssignment.library_id == target.library_id
+    ).update({"teacher_profile_id": profile_id})
+    db.commit()
+
+    return {"linked": True, "library_id": target.library_id}
 # ============================================
 # CALCULATION AUDIT ENDPOINTS
 # ============================================
