@@ -76,14 +76,16 @@ class TeacherAssignment(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     tax_rate = Column(Float, default=0.0)
     revenue_percentage = Column(Float, default=1.0)
+    teacher_profile_id = Column(Integer, ForeignKey("teacher_profiles.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC), onupdate=lambda: datetime.now(pytz.UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC), onupdate=lambda: datetime.now(pytz.UTC))
     
     stage = relationship("Stage", back_populates="teacher_assignments")
     section = relationship("Section", back_populates="teacher_assignments")
     subject = relationship("Subject", back_populates="teacher_assignments")
     payments = relationship("TeacherPayment", back_populates="assignment")
-
+    teacher_profile = relationship("TeacherProfile", back_populates="assignments")
 
 class FinancialPeriod(Base):
     """Payment periods"""
@@ -152,3 +154,97 @@ class TeacherPayment(Base):
     
     period = relationship("FinancialPeriod", back_populates="teacher_payments")
     assignment = relationship("TeacherAssignment", back_populates="payments")
+
+class TeacherProfile(Base):
+    """
+    One profile per real teacher (identified by P-code like P0046).
+    Links multiple library assignments belonging to the same person.
+    """
+    __tablename__ = "teacher_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(10), unique=True, nullable=False)   # P0046
+    name = Column(String(255), nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC),
+                        onupdate=lambda: datetime.now(pytz.UTC))
+
+    assignments = relationship("TeacherAssignment", back_populates="teacher_profile")
+    finalizations = relationship("PaymentFinalization", back_populates="teacher_profile")
+
+
+class CalculationAudit(Base):
+    """
+    Full audit trail for every calculation run.
+    All runs are kept. The run active at finalization is linked via
+    PaymentFinalization.audit_id.
+    """
+    __tablename__ = "calculation_audits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_id = Column(Integer, ForeignKey("financial_periods.id"), nullable=False)
+    stage_id = Column(Integer, ForeignKey("stages.id"), nullable=False)
+    triggered_by_user_id = Column(Integer, nullable=True)
+
+    # overall status: "passed" | "warnings" | "failed"
+    status = Column(String(20), nullable=False, default="passed")
+
+    # JSON array of warning objects:
+    # [{"code": "ZERO_WATCH_TIME_INCLUDED", "message": "...", "severity": "warning",
+    #   "library_id": 123, "library_name": "..."}]
+    warnings = Column(JSON, nullable=True, default=list)
+
+    # Snapshot of every input used — section revenues, watch times, excluded libs
+    inputs_snapshot = Column(JSON, nullable=True, default=dict)
+
+    # Snapshot of outputs — {library_id: final_payment}
+    outputs_snapshot = Column(JSON, nullable=True, default=dict)
+
+    # Cross-validation result
+    verification_status = Column(String(20), nullable=False, default="matched")
+    verification_delta = Column(Float, nullable=True, default=0.0)
+
+    # Admin acknowledgement
+    acknowledged = Column(Boolean, default=False)
+    acknowledged_by_user_id = Column(Integer, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
+
+    period = relationship("FinancialPeriod")
+    stage = relationship("Stage")
+
+
+class PaymentFinalization(Base):
+    """
+    Records the admin's finalization decision for one teacher/stage/section
+    in one period. Transfer % is set here manually.
+    Carry-forward flows: carry_forward_out from period N becomes
+    carry_forward_in for the same teacher/stage/section in period N+1.
+    """
+    __tablename__ = "payment_finalizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    period_id = Column(Integer, ForeignKey("financial_periods.id"), nullable=False)
+    teacher_profile_id = Column(Integer, ForeignKey("teacher_profiles.id"), nullable=False)
+    stage_id = Column(Integer, ForeignKey("stages.id"), nullable=False)
+    section_id = Column(Integer, ForeignKey("sections.id"), nullable=False)
+    audit_id = Column(Integer, ForeignKey("calculation_audits.id"), nullable=True)
+
+    gross_payment = Column(Float, nullable=False, default=0.0)
+    carry_forward_in = Column(Float, nullable=False, default=0.0)
+    total_due = Column(Float, nullable=False, default=0.0)
+    transfer_percentage = Column(Float, nullable=False, default=1.0)
+    transfer_amount = Column(Float, nullable=False, default=0.0)
+    carry_forward_out = Column(Float, nullable=False, default=0.0)
+
+    notes = Column(Text, nullable=True)
+    finalized_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
+
+    period = relationship("FinancialPeriod")
+    teacher_profile = relationship("TeacherProfile", back_populates="finalizations")
+    stage = relationship("Stage")
+    section = relationship("Section")
+    audit = relationship("CalculationAudit")
