@@ -160,6 +160,55 @@ const BulkEditModal = ({ count, onSave, onClose }) => {
   );
 };
 
+// ── AddTeacherProfileForm ─────────────────────────────────────────────────────
+const AddTeacherProfileForm = ({ onCreated }) => {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!code || !name) { alert('P-Code and Name are required.'); return; }
+    setSaving(true);
+    try {
+      await financialApi.createTeacherProfile({
+        code: code.toUpperCase().trim(),
+        name: name.trim(),
+        notes: notes.trim() || null,
+      });
+      setCode(''); setName(''); setNotes('');
+      await onCreated();
+    } catch (e) {
+      alert('Failed: ' + (e.response?.data?.detail || e.message));
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">P-Code *</label>
+        <Input placeholder="P0046" value={code}
+          onChange={e => setCode(e.target.value.toUpperCase())}
+          className="font-mono"/>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Full Name *</label>
+        <Input placeholder="Mohamed Ali" value={name}
+          onChange={e => setName(e.target.value)}/>
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+        <Input placeholder="Optional notes" value={notes}
+          onChange={e => setNotes(e.target.value)}/>
+      </div>
+      <Button onClick={handleSubmit} disabled={saving}
+        className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2">
+        <Plus className="w-4 h-4"/>
+        {saving ? 'Saving…' : 'Add Profile'}
+      </Button>
+    </div>
+  );
+};
 // ── MultiSectionPicker — checkbox list for picking multiple sections ──────────
 const MultiSectionPicker = ({ availableSections, selectedIds, onChange, disabled }) => {
   const toggle = (id) => {
@@ -664,11 +713,18 @@ const Settings = () => {
   const loadUnlinkedAssignments = useCallback(async () => {
     setLoadingUnlinked(true);
     try {
-      const [unlinked, profiles] = await Promise.all([
+const [unlinked, profiles] = await Promise.all([
         financialApi.getUnlinkedAssignments(),
         financialApi.getTeacherProfiles(),
       ]);
-      setUnlinkedAssignments(unlinked);
+      // Deduplicate by library_id (safety net in case backend returns duplicates)
+      const seen = new Set();
+      const deduped = unlinked.filter(a => {
+        if (seen.has(a.library_id)) return false;
+        seen.add(a.library_id);
+        return true;
+      });
+      setUnlinkedAssignments(deduped);
       setTeacherProfilesList(profiles);
     } catch (e) {
       console.error('Error loading unlinked assignments:', e);
@@ -688,22 +744,21 @@ const Settings = () => {
     } finally { setAutoLinking(false); }
   };
 
-  const handleManualLink = async (libraryId) => {
+const handleManualLink = async (libraryId) => {
     const profileId = linkProfileId[libraryId];
     if (!profileId) return;
-    // Find assignment id from assignments list by library_id
     const assignment = assignments.find(a => a.library_id === libraryId);
     if (!assignment) { flash('Assignment not found', 'error'); return; }
     try {
       await financialApi.manuallyLinkProfile(assignment.id, parseInt(profileId));
       flash('Assignment linked successfully.');
+      // Immediately remove from unlinked list (all rows with same library_id)
+      setUnlinkedAssignments(prev => prev.filter(a => a.library_id !== libraryId));
       setLinkProfileId(prev => { const n = { ...prev }; delete n[libraryId]; return n; });
-      await loadUnlinkedAssignments();
     } catch (e) {
       flash('Link failed: ' + (e.response?.data?.detail || e.message), 'error');
     }
   };
-
   
   const flash = useCallback((text, type = 'success') => {
     setMsg({ text, type });
@@ -1041,6 +1096,86 @@ const Settings = () => {
         </CardContent>
       </Card>
 
+      {/* Add Teacher Profile manually */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Plus className="w-5 h-5 text-green-600"/>
+            Add Teacher Profile Manually
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-gray-500 mb-3">
+            Use this when a library has no P-code in its name. Create the profile here, then manually link it below.
+          </p>
+          <AddTeacherProfileForm
+            onCreated={async () => {
+              await loadUnlinkedAssignments();
+              flash('Teacher profile created.');
+            }}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Existing Profiles table */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-blue-600"/>
+              Linked Teacher Profiles ({teacherProfilesList.length})
+            </CardTitle>
+            <Button size="sm" variant="outline" onClick={loadUnlinkedAssignments}
+              className="text-xs flex items-center gap-1">
+              <RefreshCw className="w-3 h-3"/>Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {teacherProfilesList.length === 0 ? (
+            <p className="text-sm text-gray-400 italic text-center py-6">
+              No profiles yet. Run Auto-Link or add one manually above.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">P-Code</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Name</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Notes</th>
+                    <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teacherProfilesList.map(p => (
+                    <tr key={p.id} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-2 font-mono font-bold text-blue-700">{p.code}</td>
+                      <td className="px-4 py-2 font-medium text-gray-800">{p.name}</td>
+                      <td className="px-4 py-2 text-xs text-gray-400">{p.notes || '—'}</td>
+                      <td className="px-4 py-2 text-right">
+                        <Button size="sm" variant="outline"
+                          onClick={async () => {
+                            if (!window.confirm(`Delete profile ${p.code} - ${p.name}? This will unlink all their assignments.`)) return;
+                            try {
+                              await financialApi.deleteTeacherProfile(p.id);
+                              flash(`Profile ${p.code} deleted.`);
+                              await loadUnlinkedAssignments();
+                            } catch (e) { flash('Delete failed: ' + (e.response?.data?.detail || e.message), 'error'); }
+                          }}
+                          className="text-red-500 hover:text-red-700 h-7 px-2">
+                          <Trash2 className="w-3.5 h-3.5"/>
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      
       {/* Needs Manual Linking card */}
       <Card>
         <CardHeader>
