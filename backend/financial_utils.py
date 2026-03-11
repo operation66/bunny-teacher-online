@@ -77,7 +77,7 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
         "S1-MATH-EN-P0138-Menna Ahmed"         → ('S1', 'LANG','MATH','P0138', 'Menna Ahmed')
         "S1-AR-General"                        → ('S1', None,  'AR',   None,    None)
     """
-try:
+    try:
         if not library_name:
             return (None, None, None, None, None)
 
