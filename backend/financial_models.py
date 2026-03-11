@@ -79,7 +79,6 @@ class TeacherAssignment(Base):
     teacher_profile_id = Column(Integer, ForeignKey("teacher_profiles.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC), onupdate=lambda: datetime.now(pytz.UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC), onupdate=lambda: datetime.now(pytz.UTC))
     
     stage = relationship("Stage", back_populates="teacher_assignments")
     section = relationship("Section", back_populates="teacher_assignments")
