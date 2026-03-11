@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from '../components/ui/alert';
 import financialApi from '../services/financial_api';
 import {
   Settings as SettingsIcon, Plus, Trash2, Save, Users,
+  Link, RefreshCw, 
   BookOpen, GraduationCap, CheckCircle, X, Edit2, AlertTriangle, Clock,
 } from 'lucide-react';
 
@@ -650,6 +651,60 @@ const Settings = () => {
   const [unmatchedResults, setUnmatchedResults] = useState(null);
   const [pendingLibs, setPendingLibs] = useState([]); // skipped from manual editor
 
+  // Teacher profile auto-link state
+  const [autoLinkResult, setAutoLinkResult]           = useState(null);
+  const [autoLinking, setAutoLinking]                 = useState(false);
+  const [unlinkedAssignments, setUnlinkedAssignments] = useState([]);
+  const [loadingUnlinked, setLoadingUnlinked]         = useState(false);
+  const [teacherProfilesList, setTeacherProfilesList] = useState([]);
+  const [linkProfileId, setLinkProfileId]             = useState({}); // { library_id: profile_id }
+
+  // ── Teacher Profile Auto-Link handlers ──────────────────────────────────
+
+  const loadUnlinkedAssignments = useCallback(async () => {
+    setLoadingUnlinked(true);
+    try {
+      const [unlinked, profiles] = await Promise.all([
+        financialApi.getUnlinkedAssignments(),
+        financialApi.getTeacherProfiles(),
+      ]);
+      setUnlinkedAssignments(unlinked);
+      setTeacherProfilesList(profiles);
+    } catch (e) {
+      console.error('Error loading unlinked assignments:', e);
+    } finally { setLoadingUnlinked(false); }
+  }, []);
+
+  const handleAutoLinkTeachers = async () => {
+    setAutoLinking(true);
+    setAutoLinkResult(null);
+    try {
+      const result = await financialApi.autoLinkProfiles();
+      setAutoLinkResult(result);
+      await loadUnlinkedAssignments();
+      flash(`Auto-link complete: ${result.linked} linked, ${result.profiles_created} new profiles created.`);
+    } catch (e) {
+      flash('Auto-link failed: ' + (e.response?.data?.detail || e.message), 'error');
+    } finally { setAutoLinking(false); }
+  };
+
+  const handleManualLink = async (libraryId) => {
+    const profileId = linkProfileId[libraryId];
+    if (!profileId) return;
+    // Find assignment id from assignments list by library_id
+    const assignment = assignments.find(a => a.library_id === libraryId);
+    if (!assignment) { flash('Assignment not found', 'error'); return; }
+    try {
+      await financialApi.manuallyLinkProfile(assignment.id, parseInt(profileId));
+      flash('Assignment linked successfully.');
+      setLinkProfileId(prev => { const n = { ...prev }; delete n[libraryId]; return n; });
+      await loadUnlinkedAssignments();
+    } catch (e) {
+      flash('Link failed: ' + (e.response?.data?.detail || e.message), 'error');
+    }
+  };
+
+  
   const flash = useCallback((text, type = 'success') => {
     setMsg({ text, type });
     setTimeout(() => setMsg({ text: '', type: '' }), 5000);
@@ -676,7 +731,11 @@ const Settings = () => {
     finally { setLoading(false); }
   }, [flash]);
 
-  useEffect(() => { loadAll(); loadPendingFromStorage(); }, [loadAll, loadPendingFromStorage]);
+  useEffect(() => {
+    loadAll();
+    loadPendingFromStorage();
+    loadUnlinkedAssignments();
+  }, [loadAll, loadPendingFromStorage, loadUnlinkedAssignments]);
 
   // ── Stage CRUD ────────────────────────────────────────────────────────────
   const createStage = async (e) => {
@@ -931,6 +990,145 @@ const Settings = () => {
     );
   };
 
+  const tabTeacherProfilesJSX = (
+    <div className="space-y-6">
+
+      {/* Auto-link card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Link className="w-5 h-5 text-blue-600"/>
+            Teacher Profile Auto-Link
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm text-gray-600">
+                Scan all library assignments, extract teacher P-codes (e.g. P0046),
+                create teacher profiles automatically, and link assignments to them.
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                Libraries with no P-code will appear below in the "Needs Manual Linking" list.
+              </p>
+            </div>
+            <Button
+              onClick={handleAutoLinkTeachers}
+              disabled={autoLinking}
+              className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2 flex-shrink-0">
+              <RefreshCw className={`w-4 h-4 ${autoLinking ? 'animate-spin' : ''}`}/>
+              {autoLinking ? 'Running…' : 'Auto-Link Teachers'}
+            </Button>
+          </div>
+
+          {/* Result summary */}
+          {autoLinkResult && (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+              {[
+                { label: 'Total Assignments', value: autoLinkResult.total_assignments, color: 'text-gray-700' },
+                { label: 'Linked',            value: autoLinkResult.linked,            color: 'text-green-700' },
+                { label: 'Already Linked',    value: autoLinkResult.already_linked,    color: 'text-blue-700' },
+                { label: 'Profiles Created',  value: autoLinkResult.profiles_created,  color: 'text-purple-700' },
+                { label: 'Unlinked',          value: autoLinkResult.unlinked,          color: 'text-red-600' },
+              ].map(item => (
+                <div key={item.label} className="text-center">
+                  <div className={`text-2xl font-bold ${item.color}`}>{item.value}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{item.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Needs Manual Linking card */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-orange-500"/>
+              Needs Manual Linking
+              {unlinkedAssignments.length > 0 && (
+                <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-medium ml-1">
+                  {unlinkedAssignments.length}
+                </span>
+              )}
+            </CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={loadUnlinkedAssignments}
+              disabled={loadingUnlinked}
+              className="text-xs flex items-center gap-1">
+              <RefreshCw className={`w-3 h-3 ${loadingUnlinked ? 'animate-spin' : ''}`}/>
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingUnlinked ? (
+            <div className="text-center py-8 text-gray-400 text-sm">Loading…</div>
+          ) : unlinkedAssignments.length === 0 ? (
+            <div className="flex items-center gap-2 text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+              <CheckCircle className="w-4 h-4"/>
+              <span className="text-sm font-medium">All assignments are linked to teacher profiles.</span>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Library Name</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Library ID</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Reason</th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Link To Profile</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unlinkedAssignments.map((a, i) => (
+                    <tr key={i} className="border-b hover:bg-gray-50">
+                      <td className="px-4 py-2 font-medium text-gray-800">{a.library_name}</td>
+                      <td className="px-4 py-2 font-mono text-gray-500 text-xs">{a.library_id}</td>
+                      <td className="px-4 py-2">
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium
+                          ${a.reason === 'no_p_code'
+                            ? 'bg-orange-100 text-orange-700'
+                            : 'bg-yellow-100 text-yellow-700'}`}>
+                          {a.reason === 'no_p_code' ? 'No P-code in name' : 'P-code not in DB'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={linkProfileId[a.library_id] || ''}
+                            onChange={e => setLinkProfileId(prev => ({ ...prev, [a.library_id]: e.target.value }))}
+                            className="text-xs border rounded px-2 py-1 bg-white">
+                            <option value="">Select teacher…</option>
+                            {teacherProfilesList.map(p => (
+                              <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                            ))}
+                          </select>
+                          <Button
+                            size="sm"
+                            onClick={() => handleManualLink(a.library_id)}
+                            disabled={!linkProfileId[a.library_id]}
+                            className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 h-auto flex items-center gap-1">
+                            <Link className="w-3 h-3"/>Link
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+    </div>
+  );
+  
   // ── TAB JSX (inline — no inner components) ────────────────────────────────
   const tabStagesJSX = (
     <div className="space-y-6">
@@ -1262,10 +1460,11 @@ const Settings = () => {
 
   // ── Final render ──────────────────────────────────────────────────────────
   const TABS = [
-    { key: 'stages', label: `Stages (${stages.length})`, Icon: GraduationCap },
-    { key: 'sections', label: `Sections (${sections.length})`, Icon: Users },
-    { key: 'subjects', label: `Subjects (${subjects.length})`, Icon: BookOpen },
-    { key: 'assignments', label: `Assignments (${assignments.length})`, Icon: CheckCircle },
+    { key: 'stages',      label: `Stages (${stages.length})`,           Icon: GraduationCap },
+    { key: 'sections',    label: `Sections (${sections.length})`,        Icon: Users },
+    { key: 'subjects',    label: `Subjects (${subjects.length})`,        Icon: BookOpen },
+    { key: 'assignments', label: `Assignments (${assignments.length})`,  Icon: CheckCircle },
+    { key: 'teachers',    label: `Teacher Profiles`,                     Icon: Link },
   ];
 
   if (loading && stages.length === 0) return (
@@ -1312,10 +1511,11 @@ const Settings = () => {
           ))}
         </div>
 
-        {activeTab === 'stages' && tabStagesJSX}
-        {activeTab === 'sections' && tabSectionsJSX}
-        {activeTab === 'subjects' && tabSubjectsJSX}
+        {activeTab === 'stages'      && tabStagesJSX}
+        {activeTab === 'sections'    && tabSectionsJSX}
+        {activeTab === 'subjects'    && tabSubjectsJSX}
         {activeTab === 'assignments' && tabAssignmentsJSX}
+        {activeTab === 'teachers'    && tabTeacherProfilesJSX}
       </div>
     </div>
   );
