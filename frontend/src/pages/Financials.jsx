@@ -139,10 +139,16 @@ const Financials = () => {
   const [sortCol, setSortCol]             = useState('library_name');
   const [sortDir, setSortDir]             = useState('asc');
 
-  // ── NEW: Teacher view toggle ──────────────────────────────────────────────
-  const [viewMode, setViewMode] = useState('library'); // 'library' | 'teacher'
+// ── NEW: Teacher view toggle ──────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState('teacher'); // default to teacher view
   const [expandedTeachers, setExpandedTeachers] = useState(new Set());
 
+  // ── Search ────────────────────────────────────────────────────────────────
+  const [searchQuery, setSearchQuery]         = useState('');
+  const [searchResults, setSearchResults]     = useState([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [highlightedId, setHighlightedId]     = useState(null); // library_id or teacher_profile_id
+  const searchRef                             = useRef(null);
   // ── NEW: Audit state ──────────────────────────────────────────────────────
   const [lastAudit, setLastAudit]             = useState(null);
   const [auditExpanded, setAuditExpanded]     = useState(false);
@@ -533,6 +539,65 @@ const Financials = () => {
     return financialData.teacher_payments.reduce((sum,p)=>sum+p.final_payment,0);
   },[financialData]);
 
+  // ── Search logic ──────────────────────────────────────────────────────────
+  const allPayments = useMemo(() => financialData?.teacher_payments || [], [financialData]);
+
+  useEffect(() => {
+    if (!searchQuery.trim() || allPayments.length === 0) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+    const q = searchQuery.toLowerCase();
+    const seen = new Set();
+    const results = [];
+    allPayments.forEach(p => {
+      const nameMatch  = (p.library_name || '').toLowerCase().includes(q);
+      const codeMatch  = (p.teacher_profile_code || '').toLowerCase().includes(q);
+      const tNameMatch = (p.teacher_profile_name || '').toLowerCase().includes(q);
+      if (nameMatch || codeMatch || tNameMatch) {
+        const key = p.teacher_profile_id || p.library_id;
+        if (!seen.has(key)) {
+          seen.add(key);
+          results.push({
+            id: key,
+            library_id: p.library_id,
+            teacher_profile_id: p.teacher_profile_id,
+            label: p.teacher_profile_name || p.library_name,
+            sublabel: p.teacher_profile_code
+              ? `${p.teacher_profile_code} · ${p.library_name}`
+              : `Library ID: ${p.library_id}`,
+            section_id: p.section_id,
+          });
+        }
+      }
+    });
+    setSearchResults(results.slice(0, 10));
+    setShowSearchResults(true);
+  }, [searchQuery, allPayments]);
+
+  const scrollToResult = (result) => {
+    setHighlightedId(result.library_id);
+    setShowSearchResults(false);
+    setSearchQuery('');
+    // Expand the section containing this payment
+    if (result.section_id) {
+      setExpandedSections(prev => new Set([...prev, result.section_id]));
+    }
+    // In teacher view, expand the teacher card
+    if (result.teacher_profile_id) {
+      setExpandedTeachers(prev => new Set([...prev, result.teacher_profile_id]));
+    }
+    // Scroll after a tick to let expansion render
+    setTimeout(() => {
+      const el = document.getElementById(`payment-row-${result.library_id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Flash highlight then clear
+        setTimeout(() => setHighlightedId(null), 3000);
+      }
+    }, 150);
+  };
   // ── NEW: Teacher view grouping ────────────────────────────────────────────
   const groupPaymentsByTeacher = (payments) => {
     const grouped = {};
@@ -956,7 +1021,12 @@ const Financials = () => {
           </thead>
           <tbody>
             {sorted.map(payment=>(
-              <tr key={payment.id} className="border-b hover:bg-gray-50 transition-colors">
+              <tr key={payment.id}
+                id={`payment-row-${payment.library_id}`}
+                className={`border-b transition-colors
+                  ${highlightedId === payment.library_id
+                    ? 'bg-yellow-100 ring-2 ring-yellow-400'
+                    : 'hover:bg-gray-50'}`}>
                 <td className={`${tdClass} text-left`}>
                   <div className="font-medium text-gray-900">{payment.library_name}</div>
                   <div className="text-xs text-gray-400">ID: {payment.library_id}</div>
@@ -1098,7 +1168,10 @@ const Financials = () => {
                     </thead>
                     <tbody>
                       {teacher.payments.map(p=>(
-                        <tr key={p.id} className="border-b border-gray-200">
+                        <tr key={p.id}
+                          id={`payment-row-${p.library_id}`}
+                          className={`border-b border-gray-200 transition-colors
+                            ${highlightedId === p.library_id ? 'bg-yellow-100' : ''}`}>
                           <td className="py-1.5">
                             <div className="font-medium text-gray-700">{p.library_name}</div>
                             <div className="text-gray-400">ID: {p.library_id}</div>
@@ -1300,10 +1373,15 @@ const Financials = () => {
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER: Calculate footer bar
   // ─────────────────────────────────────────────────────────────────────────
-  const renderCalculateBar = () => {
+const renderCalculateBar = () => {
     if(!financialData) return null;
-    const canFinalize = lastAudit && (lastAudit.acknowledged || lastAudit.status === 'passed');
-
+    const hasPayments = financialData.teacher_payments.length > 0;
+    const canFinalize = hasPayments && (
+      !lastAudit ||                          // no audit yet → still allow
+      lastAudit.status === 'passed' ||       // clean run
+      lastAudit.acknowledged                 // admin acknowledged warnings
+    );
+  
     return (
       <Card className={`border-2 ${revenueChanged?'border-orange-300 bg-orange-50':'border-blue-200 bg-blue-50'}`}>
         <CardContent className="p-5">
@@ -2143,6 +2221,43 @@ const Financials = () => {
 
         {renderPeriods()}
         {renderStages()}
+
+        {/* ── Global Search Bar ── */}
+        {financialData && (
+          <div className="relative" ref={searchRef}>
+            <div className="flex items-center gap-2 bg-white border-2 border-gray-200 rounded-xl px-4 py-2.5 shadow-sm focus-within:border-blue-400 transition-colors">
+              <RefreshCw className="w-4 h-4 text-gray-400 flex-shrink-0" style={{transform:'none'}}/>
+              <input
+                type="text"
+                placeholder="Search teacher name, P-code, or library…"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onFocus={() => searchResults.length > 0 && setShowSearchResults(true)}
+                className="flex-1 text-sm outline-none bg-transparent placeholder-gray-400"
+              />
+              {searchQuery && (
+                <button onClick={() => { setSearchQuery(''); setShowSearchResults(false); }}
+                  className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+              )}
+            </div>
+            {showSearchResults && searchResults.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded-xl shadow-xl z-40 overflow-hidden">
+                {searchResults.map((r, i) => (
+                  <button key={i} onClick={() => scrollToResult(r)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50 text-left border-b last:border-0 transition-colors">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                      <Users className="w-4 h-4 text-blue-600"/>
+                    </div>
+                    <div>
+                      <div className="font-medium text-gray-900 text-sm">{r.label}</div>
+                      <div className="text-xs text-gray-400">{r.sublabel}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {financialData && (
           <>
