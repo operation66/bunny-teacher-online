@@ -443,3 +443,6 @@ class CalculatePaymentsResponse(BaseModel):
     payments_calculated: int
     total_payment: float
     payments: List[TeacherPaymentWithDetails]
+    audit_id: Optional[int] = None
+    audit_status: Optional[str] = None
+    audit_warnings: Optional[List[dict]] = None
