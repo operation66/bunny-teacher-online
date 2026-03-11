@@ -97,7 +97,31 @@ try:
             conn.execute(sql_text("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1"))
             logger.info("✅ Added token_version column")
 
+        result = conn.execute(sql_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='teacher_assignments' AND column_name='teacher_profile_id'"
+        )).fetchone()
+        if not result:
+            logger.info("Adding 'teacher_profile_id' column to teacher_assignments...")
+            conn.execute(sql_text(
+                "ALTER TABLE teacher_assignments ADD COLUMN teacher_profile_id INTEGER "
+                "REFERENCES teacher_profiles(id) ON DELETE SET NULL"
+            ))
+            logger.info("✅ Added teacher_profile_id column")
+
+        result = conn.execute(sql_text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name='teacher_assignments' AND column_name='updated_at'"
+        )).fetchone()
+        if not result:
+            logger.info("Adding 'updated_at' column to teacher_assignments...")
+            conn.execute(sql_text(
+                "ALTER TABLE teacher_assignments ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE"
+            ))
+            logger.info("✅ Added teacher_assignments.updated_at column")
+    
     logger.info("✅ Financial table migrations complete")
+    
 except Exception as e:
     logger.error(f"❌ Migration error (non-fatal): {e}")
 
@@ -1404,7 +1428,7 @@ async def auto_match_teachers(db: Session = Depends(get_db), current_user: model
                 unmatched_count += 1
                 continue
 
-            stage_code, section_code, subject_code = parse_library_name(lib_name)
+            stage_code, section_code, subject_code, teacher_code, teacher_name = parse_library_name(lib_name)
 
             if not stage_code or not subject_code:
                 results.append(AutoMatchResult(
@@ -1543,6 +1567,203 @@ async def auto_match_teachers(db: Session = Depends(get_db), current_user: model
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
 
+# ============================================
+# TEACHER PROFILE ENDPOINTS
+# ============================================
+
+from financial_models import TeacherProfile as TeacherProfileModel, CalculationAudit, PaymentFinalization
+from financial_schemas import (
+    TeacherProfile as TeacherProfileSchema,
+    TeacherProfileCreate, TeacherProfileUpdate,
+    AutoLinkResponse, UnlinkedAssignment,
+    CalculationAuditSummary, AcknowledgeAuditRequest,
+    FinalizationPreviewResponse, FinalizationPreviewRow,
+    SubmitFinalizationRequest, FinalizationRecord,
+    ReportConfig, ReportResponse, ReportRow, ReportColumnConfig,
+    DashboardSummaryResponse, DashboardKPIs, PeriodStageCell,
+    TeacherRankingRow, DashboardComparisonRequest, DashboardComparisonResponse,
+    DashboardComparisonRow,
+)
+
+
+@app.get("/teacher-profiles/", response_model=List[TeacherProfileSchema])
+def get_teacher_profiles(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    profiles = db.query(TeacherProfileModel).order_by(TeacherProfileModel.name).all()
+    return profiles
+
+
+@app.post("/teacher-profiles/", response_model=TeacherProfileSchema)
+def create_teacher_profile(
+    profile: TeacherProfileCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    existing = db.query(TeacherProfileModel).filter(
+        TeacherProfileModel.code == profile.code
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Profile with code {profile.code} already exists")
+    db_profile = TeacherProfileModel(**profile.dict())
+    db.add(db_profile)
+    db.commit()
+    db.refresh(db_profile)
+    return db_profile
+
+
+@app.put("/teacher-profiles/{profile_id}", response_model=TeacherProfileSchema)
+def update_teacher_profile(
+    profile_id: int,
+    profile: TeacherProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    db_profile = db.query(TeacherProfileModel).filter(
+        TeacherProfileModel.id == profile_id
+    ).first()
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    for field, value in profile.dict(exclude_unset=True).items():
+        setattr(db_profile, field, value)
+    db_profile.updated_at = datetime.now(pytz.UTC)
+    db.commit()
+    db.refresh(db_profile)
+    return db_profile
+
+
+@app.delete("/teacher-profiles/{profile_id}")
+def delete_teacher_profile(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    db_profile = db.query(TeacherProfileModel).filter(
+        TeacherProfileModel.id == profile_id
+    ).first()
+    if not db_profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    # Unlink assignments before deleting
+    db.query(TeacherAssignment).filter(
+        TeacherAssignment.teacher_profile_id == profile_id
+    ).update({"teacher_profile_id": None})
+    db.delete(db_profile)
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/teacher-profiles/auto-link", response_model=AutoLinkResponse)
+async def auto_link_teacher_profiles(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Scans all TeacherAssignments, extracts P-codes from library names,
+    creates TeacherProfile records if needed, and links assignments.
+    Assignments with no P-code are returned in unlinked_assignments list
+    for manual linking in Settings.
+    """
+    try:
+        assignments = db.query(TeacherAssignment).all()
+        profiles_cache = {
+            p.code: p for p in db.query(TeacherProfileModel).all()
+        }
+
+        linked = 0
+        already_linked = 0
+        profiles_created = 0
+        unlinked_list: List[UnlinkedAssignment] = []
+
+        for a in assignments:
+            _, _, _, teacher_code, teacher_name = parse_library_name(a.library_name)
+
+            if not teacher_code:
+                unlinked_list.append(UnlinkedAssignment(
+                    library_id=a.library_id,
+                    library_name=a.library_name,
+                    reason="no_p_code"
+                ))
+                continue
+
+            # Get or create profile
+            if teacher_code not in profiles_cache:
+                display_name = teacher_name or teacher_code
+                new_profile = TeacherProfileModel(
+                    code=teacher_code,
+                    name=display_name
+                )
+                db.add(new_profile)
+                db.flush()  # get the ID without committing
+                profiles_cache[teacher_code] = new_profile
+                profiles_created += 1
+
+            profile = profiles_cache[teacher_code]
+
+            if a.teacher_profile_id == profile.id:
+                already_linked += 1
+            else:
+                a.teacher_profile_id = profile.id
+                linked += 1
+
+        db.commit()
+        logger.info(
+            f"Auto-link: {linked} linked, {already_linked} already linked, "
+            f"{profiles_created} profiles created, {len(unlinked_list)} unlinked"
+        )
+
+        return AutoLinkResponse(
+            total_assignments=len(assignments),
+            linked=linked,
+            already_linked=already_linked,
+            unlinked=len(unlinked_list),
+            profiles_created=profiles_created,
+            unlinked_assignments=unlinked_list
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Auto-link error: {e}")
+        raise HTTPException(status_code=500, detail=f"Auto-link failed: {str(e)}")
+
+
+@app.get("/teacher-profiles/unlinked", response_model=List[UnlinkedAssignment])
+def get_unlinked_assignments(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Returns all assignments that have no teacher_profile_id linked."""
+    assignments = db.query(TeacherAssignment).filter(
+        TeacherAssignment.teacher_profile_id == None
+    ).all()
+    result = []
+    for a in assignments:
+        _, _, _, teacher_code, _ = parse_library_name(a.library_name)
+        result.append(UnlinkedAssignment(
+            library_id=a.library_id,
+            library_name=a.library_name,
+            reason="no_p_code" if not teacher_code else "p_code_not_in_db"
+        ))
+    return result
+
+
+@app.put("/teacher-assignments/{assignment_id}/link-profile")
+def manually_link_profile(
+    assignment_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Manually link an assignment to a teacher profile."""
+    a = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
+    if not a:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    profile_id = body.get("teacher_profile_id")
+    if not profile_id:
+        raise HTTPException(status_code=400, detail="teacher_profile_id required")
+    a.teacher_profile_id = profile_id
+    db.commit()
+    return {"success": True}
 
 # ============================================
 # FINANCIAL PERIOD ENDPOINTS
@@ -2041,8 +2262,160 @@ async def calculate_payments(
 
         db.commit()
 
+        # ── AUDIT GENERATION ─────────────────────────────────────────────────
+        # Build warning list
+        audit_warnings = []
+
+        # Warning: zero watch time libraries not excluded
+        for a in assignments:
+            if watch_time_map.get(a.library_id, 0) == 0:
+                audit_warnings.append({
+                    "code": "ZERO_WATCH_TIME_INCLUDED",
+                    "message": f"Library '{a.library_name}' has 0 watch time for this period but was included.",
+                    "severity": "warning",
+                    "library_id": a.library_id,
+                    "library_name": a.library_name,
+                })
+
+        # Warning: duplicate library IDs in assignments
+        lib_id_counts = {}
+        for a in assignments:
+            lib_id_counts[a.library_id] = lib_id_counts.get(a.library_id, 0) + 1
+        for lib_id, count in lib_id_counts.items():
+            if count > 1:
+                lib_name = next((a.library_name for a in assignments if a.library_id == lib_id), str(lib_id))
+                audit_warnings.append({
+                    "code": "DUPLICATE_LIBRARY_ASSIGNMENT",
+                    "message": f"Library '{lib_name}' appears in {count} assignments.",
+                    "severity": "critical",
+                    "library_id": lib_id,
+                    "library_name": lib_name,
+                })
+
+        # Warning: sum of payments exceeds section revenue
+        for rev in section_revenues:
+            sec_payments = [p for p in payments_created if p.section_id == rev.section_id]
+            sec_payment_sum = sum(p.final_payment for p in sec_payments)
+            if sec_payment_sum > rev.total_revenue_egp * 1.01:  # 1% tolerance
+                audit_warnings.append({
+                    "code": "PAYMENT_SUM_EXCEEDS_REVENUE",
+                    "message": (
+                        f"Section ID {rev.section_id}: payments sum "
+                        f"({sec_payment_sum:.2f}) exceeds revenue ({rev.total_revenue_egp:.2f})."
+                    ),
+                    "severity": "critical",
+                    "library_id": None,
+                    "library_name": None,
+                })
+
+        # Warning: unlinked teachers (no teacher_profile_id)
+        for a in assignments:
+            if not a.teacher_profile_id:
+                audit_warnings.append({
+                    "code": "UNLINKED_TEACHER",
+                    "message": f"Library '{a.library_name}' has no teacher profile linked. Run Auto-Link in Settings.",
+                    "severity": "warning",
+                    "library_id": a.library_id,
+                    "library_name": a.library_name,
+                })
+
+        # Cross-validation: re-derive final payments from inputs and compare
+        verification_status = "matched"
+        verification_delta = 0.0
+        try:
+            recheck_sum = 0.0
+            for rev in section_revenues:
+                sec_id = rev.section_id
+                pool = section_pool.get(sec_id, 0)
+                ord_frac = orders_by_section[sec_id] / total_all_orders
+
+                for a in assignments:
+                    if a.section_id != sec_id:
+                        continue
+                    subj = get_subject(a.subject_id)
+                    is_common = subj and subj.is_common
+
+                    if is_common:
+                        key = (a.library_id, a.subject_id)
+                        teacher_wt = allocated_wt[sec_id].get(key, 0)
+                    else:
+                        teacher_wt = watch_time_map.get(a.library_id, 0)
+
+                    wt_pct = (teacher_wt / pool) if pool > 0 else 0.0
+                    base_rev = rev.total_revenue_egp * wt_pct
+                    calc_rev = base_rev * a.revenue_percentage
+                    tax_amt  = calc_rev * a.tax_rate
+                    final    = calc_rev - tax_amt
+                    recheck_sum += final
+
+            verification_delta = abs(total_payment_sum - recheck_sum)
+            if verification_delta > 0.02:
+                verification_status = "mismatched"
+                audit_warnings.append({
+                    "code": "VERIFICATION_MISMATCH",
+                    "message": (
+                        f"Cross-validation failed: stored payments sum to {total_payment_sum:.2f} "
+                        f"but re-calculation gives {recheck_sum:.2f} "
+                        f"(delta: {verification_delta:.4f} EGP)."
+                    ),
+                    "severity": "critical",
+                    "library_id": None,
+                    "library_name": None,
+                })
+        except Exception as ve:
+            logger.error(f"Cross-validation error: {ve}")
+            verification_status = "error"
+
+        # Determine overall status
+        has_critical = any(w["severity"] == "critical" for w in audit_warnings)
+        has_warning  = any(w["severity"] == "warning"  for w in audit_warnings)
+        audit_status = "failed" if has_critical else ("warnings" if has_warning else "passed")
+
+        # Build snapshots
+        inputs_snapshot = {
+            "section_revenues": {
+                str(rev.section_id): {
+                    "total_orders": rev.total_orders,
+                    "total_revenue_egp": rev.total_revenue_egp,
+                }
+                for rev in section_revenues
+            },
+            "watch_times": {str(k): v for k, v in watch_time_map.items()},
+            "excluded_library_ids": excluded_ids,
+            "period_months": period_months,
+        }
+        outputs_snapshot = {
+            str(p.library_id): {
+                "section_id": p.section_id,
+                "final_payment": p.final_payment,
+                "watch_time_percentage": p.watch_time_percentage,
+            }
+            for p in payments_created
+        }
+
+        audit_record = CalculationAudit(
+            period_id=period_id,
+            stage_id=stage_id,
+            triggered_by_user_id=None,  # will be wired once auth is passed through
+            status=audit_status,
+            warnings=audit_warnings,
+            inputs_snapshot=inputs_snapshot,
+            outputs_snapshot=outputs_snapshot,
+            verification_status=verification_status,
+            verification_delta=verification_delta,
+            acknowledged=False,
+        )
+        db.add(audit_record)
+        db.commit()
+        db.refresh(audit_record)
+        logger.info(
+            f"Audit saved: id={audit_record.id}, status={audit_status}, "
+            f"warnings={len(audit_warnings)}, verification={verification_status}"
+        )
+
         # Serialize for response
         payments_with_details = []
+        
         for payment in payments_created:
             db.refresh(payment)
             sec  = section_map.get(payment.section_id)
@@ -2063,6 +2436,9 @@ async def calculate_payments(
             payments_calculated=len(payments_created),
             total_payment=total_payment_sum,
             payments=payments_with_details,
+            audit_id=audit_record.id,
+            audit_status=audit_status,
+            audit_warnings=audit_warnings,
         )
 
     except HTTPException:
