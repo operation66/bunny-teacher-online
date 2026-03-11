@@ -61,7 +61,7 @@ def normalize_subject_code(code: str) -> str:
 
 
 def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
-  """
+    """
     Parse a Bunny library name into
     (stage_code, section_code, subject_code, teacher_code, teacher_name).
 
@@ -72,10 +72,10 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
         - teacher_name is everything after the P-number, or None if not found
 
     Examples:
-        "(OLD)S1-AR-P0046-Zakaria Seif Eldin"  → ('S1', None,  'AR',  'P0046', 'Zakaria Seif Eldin')
-        "S1-ISC-AR-P0022-Mohamed Ali"          → ('S1', 'GEN', 'ISC', 'P0022', 'Mohamed Ali')
-        "S1-MATH-EN-P0138-Menna Ahmed"         → ('S1', 'LANG','MATH','P0138', 'Menna Ahmed')
-        "S1-AR-General"                        → ('S1', None,  'AR',   None,    None)
+        "(OLD)S1-AR-P0046-Zakaria Seif Eldin"  -> ('S1', None,  'AR',  'P0046', 'Zakaria Seif Eldin')
+        "S1-ISC-AR-P0022-Mohamed Ali"          -> ('S1', 'GEN', 'ISC', 'P0022', 'Mohamed Ali')
+        "S1-MATH-EN-P0138-Menna Ahmed"         -> ('S1', 'LANG','MATH','P0138', 'Menna Ahmed')
+        "S1-AR-General"                        -> ('S1', None,  'AR',   None,    None)
     """
     try:
         if not library_name:
@@ -88,7 +88,7 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
         name = re.sub(r'^\s*OLD\s*', '', name, flags=re.IGNORECASE)
 
         # ── Extract teacher code (P followed by exactly 4 digits) ────────────
-        # Search the ORIGINAL stripped name before splitting, preserving the
+        # Search the stripped name before splitting, preserving the
         # text after the P-code as the teacher name.
         teacher_code = None
         teacher_name = None
@@ -123,7 +123,7 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
         if normalized_part1 in COMMON_SUBJECT_CODES:
             subject_code = normalized_part1
             section_code = None
-            logger.debug(f"'{library_name}' → common: stage={stage_code}, subject={subject_code}, teacher={teacher_code}")
+            logger.debug(f"'{library_name}' -> common: stage={stage_code}, subject={subject_code}, teacher={teacher_code}")
             return (stage_code, section_code, subject_code, teacher_code, teacher_name)
 
         # Check for multi-part subject codes (PURE-MATH, APPLIED-MATH)
@@ -132,7 +132,7 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
             section_code = None
             if len(parts) >= 4 and parts[3] in SECTION_INDICATOR_TO_SECTION:
                 section_code = SECTION_INDICATOR_TO_SECTION[parts[3]]
-            logger.debug(f"'{library_name}' → multi-part: stage={stage_code}, section={section_code}, subject={subject_code}, teacher={teacher_code}")
+            logger.debug(f"'{library_name}' -> multi-part: stage={stage_code}, section={section_code}, subject={subject_code}, teacher={teacher_code}")
             return (stage_code, section_code, subject_code, teacher_code, teacher_name)
 
         # Single-part section subject (ISC, BIO, CH, PHYS, MATH, etc.)
@@ -141,7 +141,7 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
             section_code = None
             if len(parts) >= 3 and parts[2] in SECTION_INDICATOR_TO_SECTION:
                 section_code = SECTION_INDICATOR_TO_SECTION[parts[2]]
-            logger.debug(f"'{library_name}' → section subject: stage={stage_code}, section={section_code}, subject={subject_code}, teacher={teacher_code}")
+            logger.debug(f"'{library_name}' -> section subject: stage={stage_code}, section={section_code}, subject={subject_code}, teacher={teacher_code}")
             return (stage_code, section_code, subject_code, teacher_code, teacher_name)
 
         # Unknown subject code
@@ -151,6 +151,7 @@ def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str],
     except Exception as exc:
         logger.error(f"Error parsing library name '{library_name}': {exc}")
         return (None, None, None, None, None)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Payment calculation helpers
@@ -173,7 +174,7 @@ def calculate_teacher_payment(
         total_section_watch_time_seconds: Sum of ALL teachers' watch-time in section.
         revenue_percentage:               Teacher's share rate  (e.g. 0.95 = 95%).
         tax_rate:                         Tax rate              (e.g. 0.10 = 10%).
-        section_order_percentage:         For common subjects – fraction of total orders
+        section_order_percentage:         For common subjects - fraction of total orders
                                           that belong to this section (default 1.0).
     Returns:
         Dict with full calculation breakdown.
@@ -191,15 +192,15 @@ def calculate_teacher_payment(
         final_payment = calc_revenue - tax_amount
 
         return {
-            'watch_time_percentage':       watch_time_pct,
-            'section_order_percentage':    section_order_percentage,
+            'watch_time_percentage':          watch_time_pct,
+            'section_order_percentage':       section_order_percentage,
             'adjusted_watch_time_percentage': adjusted_pct,
-            'base_revenue':                base_revenue,
-            'revenue_percentage_applied':  revenue_percentage,
-            'calculated_revenue':          calc_revenue,
-            'tax_rate_applied':            tax_rate,
-            'tax_amount':                  tax_amount,
-            'final_payment':               final_payment,
+            'base_revenue':                   base_revenue,
+            'revenue_percentage_applied':     revenue_percentage,
+            'calculated_revenue':             calc_revenue,
+            'tax_rate_applied':               tax_rate,
+            'tax_amount':                     tax_amount,
+            'final_payment':                  final_payment,
         }
 
     except Exception as exc:
@@ -216,7 +217,7 @@ def calculate_teacher_payment(
 def calculate_section_order_percentages(sections_data: list) -> dict:
     """
     Given a list of {'section_id': int, 'total_orders': int},
-    return a dict mapping section_id → fraction of total orders.
+    return a dict mapping section_id -> fraction of total orders.
     Falls back to equal distribution when total_orders == 0.
     """
     try:
