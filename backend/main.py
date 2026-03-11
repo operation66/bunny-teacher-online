@@ -1766,6 +1766,871 @@ def manually_link_profile(
     return {"success": True}
 
 # ============================================
+# CALCULATION AUDIT ENDPOINTS
+# ============================================
+
+@app.get("/calculation-audits/{period_id}/{stage_id}", response_model=List[CalculationAuditSummary])
+def get_calculation_audits(
+    period_id: int,
+    stage_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Returns all audit runs for a period+stage, newest first."""
+    audits = db.query(CalculationAudit).filter(
+        CalculationAudit.period_id == period_id,
+        CalculationAudit.stage_id  == stage_id,
+    ).order_by(CalculationAudit.created_at.desc()).all()
+    return [
+        CalculationAuditSummary(
+            id=a.id,
+            period_id=a.period_id,
+            stage_id=a.stage_id,
+            status=a.status,
+            warnings=[w for w in (a.warnings or [])],
+            verification_status=a.verification_status,
+            verification_delta=a.verification_delta,
+            acknowledged=a.acknowledged,
+            created_at=a.created_at,
+        )
+        for a in audits
+    ]
+
+
+@app.post("/calculation-audits/{audit_id}/acknowledge")
+def acknowledge_audit(
+    audit_id: int,
+    body: AcknowledgeAuditRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Admin acknowledges all warnings for this audit run."""
+    audit = db.query(CalculationAudit).filter(CalculationAudit.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+    audit.acknowledged = True
+    audit.acknowledged_by_user_id = current_user.id
+    audit.acknowledged_at = datetime.now(pytz.UTC)
+    db.commit()
+    return {"success": True, "audit_id": audit_id}
+
+
+# ============================================
+# FINALIZATION ENDPOINTS
+# ============================================
+
+@app.get("/finalizations/preview/{period_id}", response_model=FinalizationPreviewResponse)
+def get_finalization_preview(
+    period_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Returns all teachers with calculated payments in this period,
+    grouped by teacher → stage → section. Loads carry-forward-in
+    from the previous finalized period automatically.
+    Also checks if a next period exists (needed for carry-forward-out).
+    """
+    try:
+        period = db.query(FinancialPeriod).filter(FinancialPeriod.id == period_id).first()
+        if not period:
+            raise HTTPException(status_code=404, detail="Period not found")
+
+        # Check if next period exists (any period with higher id or later year)
+        next_period = db.query(FinancialPeriod).filter(
+            FinancialPeriod.id > period_id
+        ).order_by(FinancialPeriod.id.asc()).first()
+        next_period_exists = next_period is not None
+
+        # Get latest acknowledged audit for this period (any stage)
+        latest_audit = db.query(CalculationAudit).filter(
+            CalculationAudit.period_id == period_id,
+            CalculationAudit.acknowledged == True,
+        ).order_by(CalculationAudit.created_at.desc()).first()
+
+        audit_acknowledged = latest_audit is not None
+
+        # Fetch all payments for this period
+        payments = db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == period_id
+        ).all()
+
+        if not payments:
+            return FinalizationPreviewResponse(
+                period_id=period_id,
+                period_name=period.name,
+                next_period_exists=next_period_exists,
+                next_period_name=next_period.name if next_period else None,
+                latest_audit_id=latest_audit.id if latest_audit else None,
+                audit_acknowledged=audit_acknowledged,
+                rows=[]
+            )
+
+        # Caches
+        stages_cache  = {s.id: s for s in db.query(Stage).all()}
+        sections_cache = {s.id: s for s in db.query(Section).all()}
+        profiles_cache = {p.id: p for p in db.query(TeacherProfileModel).all()}
+
+        # Group payments by (teacher_profile_id, stage_id, section_id)
+        from collections import defaultdict
+        grouped = defaultdict(float)
+        assignment_profile_map = {}
+
+        assignments = db.query(TeacherAssignment).all()
+        for a in assignments:
+            assignment_profile_map[a.id] = a.teacher_profile_id
+
+        for p in payments:
+            profile_id = assignment_profile_map.get(p.assignment_id)
+            if not profile_id:
+                continue  # skip unlinked teachers
+            key = (profile_id, p.stage_id, p.section_id)
+            grouped[key] += p.final_payment
+
+        # Find previous period's finalizations for carry-forward
+        previous_finalizations = {}
+        prev_period = db.query(FinancialPeriod).filter(
+            FinancialPeriod.id < period_id
+        ).order_by(FinancialPeriod.id.desc()).first()
+
+        if prev_period:
+            prev_fins = db.query(PaymentFinalization).filter(
+                PaymentFinalization.period_id == prev_period.id
+            ).all()
+            for fin in prev_fins:
+                key = (fin.teacher_profile_id, fin.stage_id, fin.section_id)
+                previous_finalizations[key] = fin.carry_forward_out
+
+        # Build preview rows
+        rows = []
+        for (profile_id, stage_id, section_id), gross in grouped.items():
+            profile = profiles_cache.get(profile_id)
+            stage   = stages_cache.get(stage_id)
+            section = sections_cache.get(section_id)
+
+            if not profile or not stage or not section:
+                continue
+
+            carry_in = previous_finalizations.get((profile_id, stage_id, section_id), 0.0)
+            total_due = gross + carry_in
+
+            # Check if already finalized for this period
+            existing_fin = db.query(PaymentFinalization).filter(
+                PaymentFinalization.period_id == period_id,
+                PaymentFinalization.teacher_profile_id == profile_id,
+                PaymentFinalization.stage_id == stage_id,
+                PaymentFinalization.section_id == section_id,
+            ).first()
+
+            rows.append(FinalizationPreviewRow(
+                teacher_profile_id=profile_id,
+                teacher_code=profile.code,
+                teacher_name=profile.name,
+                stage_id=stage_id,
+                stage_code=stage.code,
+                stage_name=stage.name,
+                section_id=section_id,
+                section_code=section.code,
+                section_name=section.name,
+                gross_payment=round(gross, 2),
+                carry_forward_in=round(carry_in, 2),
+                total_due=round(total_due, 2),
+                already_finalized=existing_fin is not None,
+                existing_transfer_percentage=existing_fin.transfer_percentage if existing_fin else None,
+                existing_transfer_amount=existing_fin.transfer_amount if existing_fin else None,
+                existing_carry_forward_out=existing_fin.carry_forward_out if existing_fin else None,
+            ))
+
+        # Sort: by teacher name, then stage, then section
+        rows.sort(key=lambda r: (r.teacher_name, r.stage_code, r.section_code))
+
+        return FinalizationPreviewResponse(
+            period_id=period_id,
+            period_name=period.name,
+            next_period_exists=next_period_exists,
+            next_period_name=next_period.name if next_period else None,
+            latest_audit_id=latest_audit.id if latest_audit else None,
+            audit_acknowledged=audit_acknowledged,
+            rows=rows
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_finalization_preview: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to load finalization preview: {str(e)}")
+
+
+@app.post("/finalizations/", response_model=List[FinalizationRecord])
+def submit_finalization(
+    request: SubmitFinalizationRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Saves finalization records for each teacher/stage/section row.
+    Upserts: if already finalized for this period, updates it.
+    """
+    try:
+        period = db.query(FinancialPeriod).filter(
+            FinancialPeriod.id == request.period_id
+        ).first()
+        if not period:
+            raise HTTPException(status_code=404, detail="Period not found")
+
+        audit = db.query(CalculationAudit).filter(
+            CalculationAudit.id == request.audit_id
+        ).first() if request.audit_id else None
+
+        # Re-load payments to compute gross amounts accurately
+        payments = db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == request.period_id
+        ).all()
+        assignments = db.query(TeacherAssignment).all()
+        assignment_profile_map = {a.id: a.teacher_profile_id for a in assignments}
+
+        from collections import defaultdict
+        gross_map = defaultdict(float)
+        for p in payments:
+            profile_id = assignment_profile_map.get(p.assignment_id)
+            if profile_id:
+                gross_map[(profile_id, p.stage_id, p.section_id)] += p.final_payment
+
+        # Previous period carry-forward
+        prev_period = db.query(FinancialPeriod).filter(
+            FinancialPeriod.id < request.period_id
+        ).order_by(FinancialPeriod.id.desc()).first()
+
+        previous_finalizations = {}
+        if prev_period:
+            for fin in db.query(PaymentFinalization).filter(
+                PaymentFinalization.period_id == prev_period.id
+            ).all():
+                key = (fin.teacher_profile_id, fin.stage_id, fin.section_id)
+                previous_finalizations[key] = fin.carry_forward_out
+
+        saved = []
+        now = datetime.now(pytz.UTC)
+
+        for row in request.rows:
+            key = (row.teacher_profile_id, row.stage_id, row.section_id)
+            gross = round(gross_map.get(key, 0.0), 2)
+            carry_in = round(previous_finalizations.get(key, 0.0), 2)
+            total_due = round(gross + carry_in, 2)
+            transfer_amount = round(total_due * row.transfer_percentage, 2)
+            carry_out = round(total_due - transfer_amount, 2)
+
+            existing = db.query(PaymentFinalization).filter(
+                PaymentFinalization.period_id == request.period_id,
+                PaymentFinalization.teacher_profile_id == row.teacher_profile_id,
+                PaymentFinalization.stage_id == row.stage_id,
+                PaymentFinalization.section_id == row.section_id,
+            ).first()
+
+            if existing:
+                existing.gross_payment = gross
+                existing.carry_forward_in = carry_in
+                existing.total_due = total_due
+                existing.transfer_percentage = row.transfer_percentage
+                existing.transfer_amount = transfer_amount
+                existing.carry_forward_out = carry_out
+                existing.notes = row.notes
+                existing.audit_id = audit.id if audit else existing.audit_id
+                existing.finalized_at = now
+                db.flush()
+                saved.append(existing)
+            else:
+                new_fin = PaymentFinalization(
+                    period_id=request.period_id,
+                    teacher_profile_id=row.teacher_profile_id,
+                    stage_id=row.stage_id,
+                    section_id=row.section_id,
+                    audit_id=audit.id if audit else None,
+                    gross_payment=gross,
+                    carry_forward_in=carry_in,
+                    total_due=total_due,
+                    transfer_percentage=row.transfer_percentage,
+                    transfer_amount=transfer_amount,
+                    carry_forward_out=carry_out,
+                    notes=row.notes,
+                    finalized_at=now,
+                )
+                db.add(new_fin)
+                db.flush()
+                saved.append(new_fin)
+
+        db.commit()
+
+        # Build response with names
+        profiles_cache = {p.id: p for p in db.query(TeacherProfileModel).all()}
+        stages_cache   = {s.id: s for s in db.query(Stage).all()}
+        sections_cache = {s.id: s for s in db.query(Section).all()}
+
+        result = []
+        for fin in saved:
+            db.refresh(fin)
+            profile = profiles_cache.get(fin.teacher_profile_id)
+            stage   = stages_cache.get(fin.stage_id)
+            section = sections_cache.get(fin.section_id)
+            result.append(FinalizationRecord(
+                id=fin.id,
+                period_id=fin.period_id,
+                teacher_profile_id=fin.teacher_profile_id,
+                teacher_code=profile.code if profile else None,
+                teacher_name=profile.name if profile else None,
+                stage_id=fin.stage_id,
+                stage_code=stage.code if stage else None,
+                section_id=fin.section_id,
+                section_code=section.code if section else None,
+                gross_payment=fin.gross_payment,
+                carry_forward_in=fin.carry_forward_in,
+                total_due=fin.total_due,
+                transfer_percentage=fin.transfer_percentage,
+                transfer_amount=fin.transfer_amount,
+                carry_forward_out=fin.carry_forward_out,
+                notes=fin.notes,
+                finalized_at=fin.finalized_at,
+                created_at=fin.created_at,
+            ))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Finalization error: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Finalization failed: {str(e)}")
+
+
+@app.get("/finalizations/{period_id}", response_model=List[FinalizationRecord])
+def get_finalizations(
+    period_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    fins = db.query(PaymentFinalization).filter(
+        PaymentFinalization.period_id == period_id
+    ).all()
+    profiles_cache = {p.id: p for p in db.query(TeacherProfileModel).all()}
+    stages_cache   = {s.id: s for s in db.query(Stage).all()}
+    sections_cache = {s.id: s for s in db.query(Section).all()}
+
+    result = []
+    for fin in fins:
+        profile = profiles_cache.get(fin.teacher_profile_id)
+        stage   = stages_cache.get(fin.stage_id)
+        section = sections_cache.get(fin.section_id)
+        result.append(FinalizationRecord(
+            id=fin.id,
+            period_id=fin.period_id,
+            teacher_profile_id=fin.teacher_profile_id,
+            teacher_code=profile.code if profile else None,
+            teacher_name=profile.name if profile else None,
+            stage_id=fin.stage_id,
+            stage_code=stage.code if stage else None,
+            section_id=fin.section_id,
+            section_code=section.code if section else None,
+            gross_payment=fin.gross_payment,
+            carry_forward_in=fin.carry_forward_in,
+            total_due=fin.total_due,
+            transfer_percentage=fin.transfer_percentage,
+            transfer_amount=fin.transfer_amount,
+            carry_forward_out=fin.carry_forward_out,
+            notes=fin.notes,
+            finalized_at=fin.finalized_at,
+            created_at=fin.created_at,
+        ))
+    return result
+
+
+@app.get("/finalizations/teacher/{profile_id}", response_model=List[FinalizationRecord])
+def get_teacher_finalization_history(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    fins = db.query(PaymentFinalization).filter(
+        PaymentFinalization.teacher_profile_id == profile_id
+    ).order_by(PaymentFinalization.period_id.desc()).all()
+    stages_cache   = {s.id: s for s in db.query(Stage).all()}
+    sections_cache = {s.id: s for s in db.query(Section).all()}
+    profile = db.query(TeacherProfileModel).filter(TeacherProfileModel.id == profile_id).first()
+
+    result = []
+    for fin in fins:
+        stage   = stages_cache.get(fin.stage_id)
+        section = sections_cache.get(fin.section_id)
+        result.append(FinalizationRecord(
+            id=fin.id,
+            period_id=fin.period_id,
+            teacher_profile_id=fin.teacher_profile_id,
+            teacher_code=profile.code if profile else None,
+            teacher_name=profile.name if profile else None,
+            stage_id=fin.stage_id,
+            stage_code=stage.code if stage else None,
+            section_id=fin.section_id,
+            section_code=section.code if section else None,
+            gross_payment=fin.gross_payment,
+            carry_forward_in=fin.carry_forward_in,
+            total_due=fin.total_due,
+            transfer_percentage=fin.transfer_percentage,
+            transfer_amount=fin.transfer_amount,
+            carry_forward_out=fin.carry_forward_out,
+            notes=fin.notes,
+            finalized_at=fin.finalized_at,
+            created_at=fin.created_at,
+        ))
+    return result
+
+
+# ============================================
+# REPORT ENDPOINT
+# ============================================
+
+@app.post("/reports/generate", response_model=ReportResponse)
+def generate_report(
+    config: ReportConfig,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Flexible report generator. Fetches payment + finalization data based on
+    the config and returns structured rows ready for frontend rendering and export.
+    """
+    try:
+        # Build base payments query
+        query = db.query(TeacherPayment)
+
+        if config.period_ids:
+            query = query.filter(TeacherPayment.period_id.in_(config.period_ids))
+        if config.stage_ids:
+            query = query.filter(TeacherPayment.stage_id.in_(config.stage_ids))
+        if config.section_ids:
+            query = query.filter(TeacherPayment.section_id.in_(config.section_ids))
+        if config.subject_ids:
+            query = query.filter(TeacherPayment.subject_id.in_(config.subject_ids))
+
+        payments = query.all()
+
+        # Build lookup caches
+        profiles_cache  = {p.id: p for p in db.query(TeacherProfileModel).all()}
+        periods_cache   = {p.id: p for p in db.query(FinancialPeriod).all()}
+        stages_cache    = {s.id: s for s in db.query(Stage).all()}
+        sections_cache  = {s.id: s for s in db.query(Section).all()}
+        subjects_cache  = {s.id: s for s in db.query(Subject).all()}
+        assignments_map = {a.id: a for a in db.query(TeacherAssignment).all()}
+
+        # Finalization data
+        fin_query = db.query(PaymentFinalization)
+        if config.period_ids:
+            fin_query = fin_query.filter(PaymentFinalization.period_id.in_(config.period_ids))
+        fins_by_key = {}
+        for fin in fin_query.all():
+            key = (fin.teacher_profile_id, fin.stage_id, fin.section_id, fin.period_id)
+            fins_by_key[key] = fin
+
+        # Build flat rows
+        from collections import defaultdict
+        flat_rows = []
+
+        for p in payments:
+            assignment = assignments_map.get(p.assignment_id)
+            profile_id = assignment.teacher_profile_id if assignment else None
+            if config.teacher_profile_ids and profile_id not in config.teacher_profile_ids:
+                continue
+
+            profile = profiles_cache.get(profile_id) if profile_id else None
+            period  = periods_cache.get(p.period_id)
+            stage   = stages_cache.get(p.stage_id)
+            section = sections_cache.get(p.section_id)
+            subject = subjects_cache.get(p.subject_id)
+
+            fin_key = (profile_id, p.stage_id, p.section_id, p.period_id)
+            fin = fins_by_key.get(fin_key)
+
+            row_data = {
+                "teacher_name":          profile.name if profile else p.library_name,
+                "teacher_code":          profile.code if profile else None,
+                "library_name":          p.library_name,
+                "library_id":            p.library_id,
+                "period_name":           period.name if period else str(p.period_id),
+                "stage_code":            stage.code if stage else None,
+                "stage_name":            stage.name if stage else None,
+                "section_code":          section.code if section else None,
+                "section_name":          section.name if section else None,
+                "subject_code":          subject.code if subject else None,
+                "subject_name":          subject.name if subject else None,
+                "watch_time_minutes":    round((p.total_watch_time_seconds or 0) / 60, 1),
+                "watch_time_percentage": round((p.watch_time_percentage or 0) * 100, 2),
+                "revenue_percentage":    round((p.revenue_percentage_applied or 0) * 100, 0),
+                "tax_percentage":        round((p.tax_rate_applied or 0) * 100, 0),
+                "base_revenue":          round(p.base_revenue or 0, 2),
+                "calculated_revenue":    round(p.calculated_revenue or 0, 2),
+                "tax_amount":            round(p.tax_amount or 0, 2),
+                "final_payment":         round(p.final_payment or 0, 2),
+                "monthly_breakdown":     p.monthly_watch_breakdown or {},
+                "transfer_percentage":   round((fin.transfer_percentage or 0) * 100, 0) if fin else None,
+                "transfer_amount":       round(fin.transfer_amount or 0, 2) if fin else None,
+                "carry_forward_in":      round(fin.carry_forward_in or 0, 2) if fin else None,
+                "carry_forward_out":     round(fin.carry_forward_out or 0, 2) if fin else None,
+                "total_due":             round(fin.total_due or 0, 2) if fin else None,
+            }
+            flat_rows.append(ReportRow(row_type="data", data=row_data))
+
+        # Grouping and subtotals
+        numeric_cols = [
+            "watch_time_minutes", "base_revenue", "calculated_revenue",
+            "tax_amount", "final_payment", "transfer_amount",
+            "carry_forward_in", "carry_forward_out", "total_due"
+        ]
+
+        if config.group_by and flat_rows:
+            group_key_map = {
+                "teacher": "teacher_name",
+                "stage":   "stage_code",
+                "section": "section_code",
+                "subject": "subject_name",
+                "period":  "period_name",
+            }
+            gk = group_key_map.get(config.group_by)
+            if gk:
+                from itertools import groupby as _groupby
+                flat_rows.sort(key=lambda r: (r.data.get(gk) or ""))
+                grouped_rows = []
+                for group_label, group_items in _groupby(flat_rows, key=lambda r: r.data.get(gk) or ""):
+                    items = list(group_items)
+                    grouped_rows.extend(items)
+                    if config.show_subtotals:
+                        subtotal_data = {"group_label": group_label}
+                        for col in numeric_cols:
+                            subtotal_data[col] = round(
+                                sum(r.data.get(col) or 0 for r in items), 2
+                            )
+                        grouped_rows.append(ReportRow(
+                            row_type="subtotal",
+                            group_label=f"Subtotal — {group_label}",
+                            data=subtotal_data
+                        ))
+                flat_rows = grouped_rows
+
+        # Grand total
+        if config.show_grand_total:
+            data_rows = [r for r in flat_rows if r.row_type == "data"]
+            grand_data = {}
+            for col in numeric_cols:
+                grand_data[col] = round(sum(r.data.get(col) or 0 for r in data_rows), 2)
+            flat_rows.append(ReportRow(
+                row_type="grand_total",
+                group_label="Grand Total",
+                data=grand_data
+            ))
+
+        # Comparative rows (teacher report only)
+        if (config.report_type == "teacher"
+                and config.comparative_teachers
+                and config.teacher_profile_ids):
+            comp_payments = db.query(TeacherPayment).filter(
+                TeacherPayment.period_id.in_(config.period_ids) if config.period_ids else True,
+                TeacherPayment.stage_id.in_(config.stage_ids) if config.stage_ids else True,
+            ).all()
+
+            for comp_cfg in config.comparative_teachers:
+                comp_profile = profiles_cache.get(comp_cfg.teacher_profile_id)
+                if not comp_profile:
+                    continue
+                comp_p_rows = [
+                    cp for cp in comp_payments
+                    if assignments_map.get(cp.assignment_id)
+                    and assignments_map[cp.assignment_id].teacher_profile_id == comp_cfg.teacher_profile_id
+                ]
+                for cp in comp_p_rows:
+                    comp_data = {
+                        "teacher_name": comp_profile.name,
+                        "teacher_code": comp_profile.code,
+                    }
+                    if "watch_time_percentage" in comp_cfg.columns:
+                        comp_data["watch_time_percentage"] = round((cp.watch_time_percentage or 0) * 100, 2)
+                    if "watch_time_minutes" in comp_cfg.columns:
+                        comp_data["watch_time_minutes"] = round((cp.total_watch_time_seconds or 0) / 60, 1)
+                    if "final_payment" in comp_cfg.columns:
+                        comp_data["final_payment"] = round(cp.final_payment or 0, 2)
+                    flat_rows.append(ReportRow(
+                        row_type="comparative",
+                        group_label=f"Compare — {comp_profile.name}",
+                        data=comp_data
+                    ))
+
+        # Build column definitions
+        all_columns = [
+            ReportColumnConfig(key="teacher_name",        label="Teacher Name",       visible="teacher_name"        in config.columns),
+            ReportColumnConfig(key="teacher_code",        label="Teacher Code",       visible="teacher_code"        in config.columns),
+            ReportColumnConfig(key="library_name",        label="Library Name",       visible="library_name"        in config.columns),
+            ReportColumnConfig(key="period_name",         label="Period",             visible="period_name"         in config.columns),
+            ReportColumnConfig(key="stage_code",          label="Stage",              visible="stage_code"          in config.columns),
+            ReportColumnConfig(key="section_code",        label="Section",            visible="section_code"        in config.columns),
+            ReportColumnConfig(key="subject_name",        label="Subject",            visible="subject_name"        in config.columns),
+            ReportColumnConfig(key="watch_time_minutes",  label="Watch (min)",        visible="watch_time_minutes"  in config.columns),
+            ReportColumnConfig(key="watch_time_percentage",label="Watch %",           visible="watch_time_percentage" in config.columns),
+            ReportColumnConfig(key="revenue_percentage",  label="Revenue %",          visible="revenue_percentage"  in config.columns),
+            ReportColumnConfig(key="tax_percentage",      label="Tax %",              visible="tax_percentage"      in config.columns),
+            ReportColumnConfig(key="base_revenue",        label="Base Revenue",       visible="base_revenue"        in config.columns),
+            ReportColumnConfig(key="calculated_revenue",  label="Calculated Revenue", visible="calculated_revenue"  in config.columns),
+            ReportColumnConfig(key="tax_amount",          label="Tax Amount",         visible="tax_amount"          in config.columns),
+            ReportColumnConfig(key="final_payment",       label="Final Payment",      visible="final_payment"       in config.columns),
+            ReportColumnConfig(key="transfer_percentage", label="Transfer %",         visible="transfer_percentage" in config.columns),
+            ReportColumnConfig(key="transfer_amount",     label="Transfer Amount",    visible="transfer_amount"     in config.columns),
+            ReportColumnConfig(key="carry_forward_in",    label="Carry Fwd In",       visible="carry_forward_in"    in config.columns),
+            ReportColumnConfig(key="carry_forward_out",   label="Carry Fwd Out",      visible="carry_forward_out"   in config.columns),
+            ReportColumnConfig(key="total_due",           label="Total Due",          visible="total_due"           in config.columns),
+        ]
+
+        return ReportResponse(
+            config=config,
+            columns=all_columns,
+            rows=flat_rows,
+            generated_at=datetime.now(pytz.UTC),
+            total_rows=len([r for r in flat_rows if r.row_type == "data"]),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Report generation error: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+
+# ============================================
+# DASHBOARD ENDPOINTS
+# ============================================
+
+@app.get("/dashboard/summary", response_model=DashboardSummaryResponse)
+def get_dashboard_summary(
+    period_id: int = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        all_periods = db.query(FinancialPeriod).order_by(
+            FinancialPeriod.year.desc(), FinancialPeriod.created_at.desc()
+        ).all()
+        all_stages = db.query(Stage).order_by(Stage.display_order).all()
+
+        # KPIs
+        fin_query = db.query(PaymentFinalization)
+        pay_query = db.query(TeacherPayment)
+
+        if period_id:
+            fin_query = fin_query.filter(PaymentFinalization.period_id == period_id)
+            pay_query = pay_query.filter(TeacherPayment.period_id == period_id)
+
+        all_fins = fin_query.all()
+        all_pays = pay_query.all()
+
+        total_finalized   = sum(f.transfer_amount for f in all_fins)
+        total_outstanding = sum(f.carry_forward_out for f in all_fins)
+        total_calculated  = sum(p.final_payment for p in all_pays)
+
+        # For periods without finalization, outstanding = calculated - finalized
+        if not all_fins and all_pays:
+            total_outstanding = total_calculated
+
+        total_watch_secs = sum(p.total_watch_time_seconds or 0 for p in all_pays)
+
+        # Active teachers = distinct teacher profiles with payments
+        assignments_with_profiles = db.query(TeacherAssignment).filter(
+            TeacherAssignment.teacher_profile_id != None
+        ).all()
+        profile_map = {a.id: a.teacher_profile_id for a in assignments_with_profiles}
+        active_profiles = set(
+            profile_map[p.assignment_id]
+            for p in all_pays
+            if p.assignment_id in profile_map
+        )
+
+        period_obj = db.query(FinancialPeriod).filter(
+            FinancialPeriod.id == period_id
+        ).first() if period_id else None
+
+        kpis = DashboardKPIs(
+            total_finalized_egp=round(total_finalized, 2),
+            total_outstanding_egp=round(total_outstanding, 2),
+            active_teachers_count=len(active_profiles),
+            total_watch_time_seconds=total_watch_secs,
+            period_id=period_id,
+            period_name=period_obj.name if period_obj else None,
+        )
+
+        # Period × Stage matrix
+        all_payments_all = db.query(TeacherPayment).all()
+        all_fins_all = db.query(PaymentFinalization).all()
+
+        fins_by_period_stage = {}
+        for fin in all_fins_all:
+            key = (fin.period_id, fin.stage_id)
+            if key not in fins_by_period_stage:
+                fins_by_period_stage[key] = {"finalized": 0.0, "outstanding": 0.0}
+            fins_by_period_stage[key]["finalized"]   += fin.transfer_amount
+            fins_by_period_stage[key]["outstanding"] += fin.carry_forward_out
+
+        pays_by_period_stage = {}
+        for p in all_payments_all:
+            key = (p.period_id, p.stage_id)
+            pays_by_period_stage[key] = pays_by_period_stage.get(key, 0.0) + p.final_payment
+
+        matrix = []
+        for period in all_periods:
+            for stage in all_stages:
+                key = (period.id, stage.id)
+                calc_total = round(pays_by_period_stage.get(key, 0.0), 2)
+                fin_data   = fins_by_period_stage.get(key, {"finalized": 0.0, "outstanding": 0.0})
+                matrix.append(PeriodStageCell(
+                    period_id=period.id,
+                    period_name=period.name,
+                    stage_id=stage.id,
+                    stage_code=stage.code,
+                    calculated_total=calc_total,
+                    finalized_total=round(fin_data["finalized"], 2),
+                    outstanding_total=round(fin_data["outstanding"], 2),
+                ))
+
+        # Teacher rankings (top 20 by payment)
+        profile_totals = {}
+        for p in all_payments_all if not period_id else all_pays:
+            assignment = db.query(TeacherAssignment).filter(
+                TeacherAssignment.id == p.assignment_id
+            ).first()
+            if not assignment or not assignment.teacher_profile_id:
+                continue
+            pid = assignment.teacher_profile_id
+            profile_totals[pid] = profile_totals.get(pid, 0.0) + p.final_payment
+
+        profiles_all = {p.id: p for p in db.query(TeacherProfileModel).all()}
+        rankings = sorted(profile_totals.items(), key=lambda x: x[1], reverse=True)[:20]
+        teacher_rankings = [
+            TeacherRankingRow(
+                teacher_profile_id=pid,
+                teacher_name=profiles_all[pid].name if pid in profiles_all else f"Profile {pid}",
+                teacher_code=profiles_all[pid].code if pid in profiles_all else None,
+                value=round(val, 2),
+                metric="payment",
+            )
+            for pid, val in rankings
+        ]
+
+        return DashboardSummaryResponse(
+            kpis=kpis,
+            matrix=matrix,
+            teacher_rankings=teacher_rankings,
+            periods=[{"id": p.id, "name": p.name, "year": p.year} for p in all_periods],
+            stages=[{"id": s.id, "code": s.code, "name": s.name} for s in all_stages],
+        )
+
+    except Exception as e:
+        logger.error(f"Dashboard summary error: {e}")
+        import traceback; logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Dashboard summary failed: {str(e)}")
+
+
+@app.post("/dashboard/comparison", response_model=DashboardComparisonResponse)
+def get_dashboard_comparison(
+    request: DashboardComparisonRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        pay_query = db.query(TeacherPayment)
+        if request.period_ids:
+            pay_query = pay_query.filter(TeacherPayment.period_id.in_(request.period_ids))
+        if request.stage_ids:
+            pay_query = pay_query.filter(TeacherPayment.stage_id.in_(request.stage_ids))
+        if request.section_ids:
+            pay_query = pay_query.filter(TeacherPayment.section_id.in_(request.section_ids))
+
+        payments = pay_query.all()
+
+        stages_cache   = {s.id: s for s in db.query(Stage).all()}
+        sections_cache = {s.id: s for s in db.query(Section).all()}
+        periods_cache  = {p.id: p for p in db.query(FinancialPeriod).all()}
+        subjects_cache = {s.id: s for s in db.query(Subject).all()}
+        profiles_cache = {p.id: p for p in db.query(TeacherProfileModel).all()}
+        assignments_map = {a.id: a for a in db.query(TeacherAssignment).all()}
+
+        fins_cache = {}
+        if request.use_finalized:
+            for fin in db.query(PaymentFinalization).all():
+                key = (fin.teacher_profile_id, fin.stage_id, fin.section_id, fin.period_id)
+                fins_cache[key] = fin
+
+        # Accumulate values by x-axis label
+        from collections import defaultdict
+        accum = defaultdict(float)
+
+        for p in payments:
+            assignment = assignments_map.get(p.assignment_id)
+
+            # Determine x-axis label
+            if request.x_axis == "teacher":
+                profile_id = assignment.teacher_profile_id if assignment else None
+                profile = profiles_cache.get(profile_id)
+                label = profile.name if profile else p.library_name
+            elif request.x_axis == "stage":
+                stage = stages_cache.get(p.stage_id)
+                label = stage.code if stage else str(p.stage_id)
+            elif request.x_axis == "section":
+                section = sections_cache.get(p.section_id)
+                label = section.code if section else str(p.section_id)
+            elif request.x_axis == "subject":
+                subject = subjects_cache.get(p.subject_id)
+                label = subject.name if subject else str(p.subject_id)
+            elif request.x_axis == "period":
+                period = periods_cache.get(p.period_id)
+                label = period.name if period else str(p.period_id)
+            else:
+                label = "Unknown"
+
+            # Determine y-axis value
+            if request.y_axis == "payment":
+                if request.use_finalized and assignment and assignment.teacher_profile_id:
+                    fin_key = (assignment.teacher_profile_id, p.stage_id, p.section_id, p.period_id)
+                    fin = fins_cache.get(fin_key)
+                    value = fin.transfer_amount if fin else p.final_payment
+                else:
+                    value = p.final_payment
+            elif request.y_axis == "watch_time":
+                value = (p.total_watch_time_seconds or 0) / 60  # minutes
+            elif request.y_axis == "watch_pct":
+                value = (p.watch_time_percentage or 0) * 100
+            elif request.y_axis == "orders":
+                value = p.section_total_orders or 0
+            elif request.y_axis == "carry_forward" and assignment and assignment.teacher_profile_id:
+                fin_key = (assignment.teacher_profile_id, p.stage_id, p.section_id, p.period_id)
+                fin = fins_cache.get(fin_key)
+                value = fin.carry_forward_out if fin else 0.0
+            else:
+                value = 0.0
+
+            accum[label] += value
+
+        rows = [
+            DashboardComparisonRow(label=label, value=round(val, 2))
+            for label, val in sorted(accum.items(), key=lambda x: x[1], reverse=True)
+        ]
+
+        return DashboardComparisonResponse(
+            x_axis=request.x_axis,
+            y_axis=request.y_axis,
+            rows=rows,
+        )
+
+    except Exception as e:
+        logger.error(f"Dashboard comparison error: {e}")
+        raise HTTPException(status_code=500, detail=f"Comparison failed: {str(e)}")
+
+# ============================================
 # FINANCIAL PERIOD ENDPOINTS
 # ============================================
 
