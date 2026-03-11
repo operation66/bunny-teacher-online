@@ -24,6 +24,7 @@ from bunny_service import get_bunny_stats, get_bunny_libraries, get_library_mont
 from financial_models import (
     Stage, Section, Subject, StageSectionSubject,
     TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment,
+    TeacherProfile as TeacherProfileModel, CalculationAudit, PaymentFinalization,
     Base as FinancialBase
 )
 from financial_schemas import (
@@ -42,7 +43,17 @@ from financial_schemas import (
     TeacherPaymentWithDetails,
     FinancialData,
     CalculatePaymentsRequest,
-    CalculatePaymentsResponse
+    CalculatePaymentsResponse,
+    TeacherProfile as TeacherProfileSchema,
+    TeacherProfileCreate, TeacherProfileUpdate,
+    AutoLinkResponse, UnlinkedAssignment,
+    CalculationAuditSummary, AcknowledgeAuditRequest,
+    FinalizationPreviewResponse, FinalizationPreviewRow,
+    SubmitFinalizationRequest, FinalizationRecord,
+    ReportConfig, ReportResponse, ReportRow, ReportColumnConfig,
+    DashboardSummaryResponse, DashboardKPIs, PeriodStageCell,
+    TeacherRankingRow, DashboardComparisonRequest, DashboardComparisonResponse,
+    DashboardComparisonRow,
 )
 from financial_utils import parse_library_name, calculate_teacher_payment, calculate_section_order_percentages
 
@@ -1571,7 +1582,6 @@ async def auto_match_teachers(db: Session = Depends(get_db), current_user: model
 # TEACHER PROFILE ENDPOINTS
 # ============================================
 
-from financial_models import TeacherProfile as TeacherProfileModel, CalculationAudit, PaymentFinalization
 from financial_schemas import (
     TeacherProfile as TeacherProfileSchema,
     TeacherProfileCreate, TeacherProfileUpdate,
