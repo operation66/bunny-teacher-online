@@ -60,105 +60,97 @@ def normalize_subject_code(code: str) -> str:
     return SUBJECT_CODE_ALIASES.get(code, code)
 
 
-def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """
-    Parse a Bunny library name into (stage_code, section_code, subject_code).
+def parse_library_name(library_name: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+  """
+    Parse a Bunny library name into
+    (stage_code, section_code, subject_code, teacher_code, teacher_name).
 
     Returns:
         - section_code is None for common subjects (they belong to ALL sections)
         - section_code is 'GEN' or 'LANG' for section-specific subjects
+        - teacher_code is the P-number e.g. 'P0046', or None if not found
+        - teacher_name is everything after the P-number, or None if not found
 
     Examples:
-        "(OLD)S1-AR-P0046-Teacher"           → ('S1', None,   'AR')     common
-        "S1-EN-P0138-Teacher"                → ('S1', None,   'EN')     common
-        "S1-HX-P0046-Teacher"                → ('S1', None,   'HX')     common
-        "S1-ISC-AR-P0022-Mohamed"            → ('S1', 'GEN',  'ISC')    section-specific
-        "S2-BIO-AR-Menna"                    → ('S2', 'GEN',  'BIO')
-        "S1-CH-AR-Teacher"                   → ('S1', 'GEN',  'CH')
-        "S1-CH-EN-Teacher"                   → ('S1', 'LANG', 'CH')
-        "S1-CHEM-AR-Teacher"                 → ('S1', 'GEN',  'CH')     normalized
-        "S1-PHYS-AR-Teacher"                 → ('S1', 'GEN',  'PHYS')
-        "S1-PHYS-EN-Teacher"                 → ('S1', 'LANG', 'PHYS')
-        "S1-MATH-AR-Teacher"                 → ('S1', 'GEN',  'MATH')
-        "S1-MATH-EN-Teacher"                 → ('S1', 'LANG', 'MATH')
-        "S1-PURE-MATH-AR-Teacher"            → ('S1', 'GEN',  'PURE-MATH')
-        "S1-PURE-MATH-EN-Teacher"            → ('S1', 'LANG', 'PURE-MATH')
-        "S1-APPLIED-MATH-AR-Teacher"         → ('S1', 'GEN',  'APPLIED-MATH')
-        "S1-APPLIED-MATH-EN-Teacher"         → ('S1', 'LANG', 'APPLIED-MATH')
-        "(0LD)S1-MATH-EN--Shady"             → ('S1', 'LANG', 'MATH')   prefix stripped
+        "(OLD)S1-AR-P0046-Zakaria Seif Eldin"  → ('S1', None,  'AR',  'P0046', 'Zakaria Seif Eldin')
+        "S1-ISC-AR-P0022-Mohamed Ali"          → ('S1', 'GEN', 'ISC', 'P0022', 'Mohamed Ali')
+        "S1-MATH-EN-P0138-Menna Ahmed"         → ('S1', 'LANG','MATH','P0138', 'Menna Ahmed')
+        "S1-AR-General"                        → ('S1', None,  'AR',   None,    None)
     """
-    try:
+try:
         if not library_name:
-            return (None, None, None)
+            return (None, None, None, None, None)
 
         name = library_name.strip()
 
         # Strip leading qualifiers: (OLD), (0LD), [OLD], etc.
-        # Match anything in parentheses or brackets at the start
         name = re.sub(r'^\s*[\(\[][^\)\]]*[\)\]]\s*', '', name)
-        name = re.sub(r'^\s*OLD\s*', '', name, flags=re.IGNORECASE)  # catch bare "OLD" too
+        name = re.sub(r'^\s*OLD\s*', '', name, flags=re.IGNORECASE)
 
-        # Split on hyphens (one or more)
+        # ── Extract teacher code (P followed by exactly 4 digits) ────────────
+        # Search the ORIGINAL stripped name before splitting, preserving the
+        # text after the P-code as the teacher name.
+        teacher_code = None
+        teacher_name = None
+        p_match = re.search(r'[Pp](\d{4})', name)
+        if p_match:
+            teacher_code = f"P{p_match.group(1)}"
+            # Everything after "P0046-" or "P0046 " is the teacher name
+            after_p = name[p_match.end():]
+            # Strip leading separator characters (hyphens, spaces)
+            after_p = re.sub(r'^[\s\-]+', '', after_p).strip()
+            if after_p:
+                teacher_name = after_p
+
+        # Split on hyphens (one or more) for stage/subject/section parsing
         parts = [p.strip().upper() for p in re.split(r'-+', name) if p.strip()]
 
         if len(parts) < 2:
             logger.warning(f"Too few parts to parse '{library_name}': {parts}")
-            return (None, None, None)
+            return (None, None, None, teacher_code, teacher_name)
 
         # ── STAGE (always first part: letter + digit(s)) ──────────────────────
         first = parts[0]
         if not re.match(r'^[A-Z]\d+$', first):
             logger.warning(f"First part '{first}' not a stage code in '{library_name}'")
-            return (None, None, None)
+            return (None, None, None, teacher_code, teacher_name)
         stage_code = first
 
-        # ── SUBJECT & SECTION (analyze parts[1], parts[2], parts[3]...) ───────
-        # Handle multi-part subjects like "PURE-MATH" or "APPLIED-MATH"
-
-        # Check if parts[1] is a common subject
+        # ── SUBJECT & SECTION ─────────────────────────────────────────────────
         part1 = parts[1]
         normalized_part1 = normalize_subject_code(part1)
 
         if normalized_part1 in COMMON_SUBJECT_CODES:
-            # e.g., S1-AR-... or S1-HX-... or S1-EN-...
             subject_code = normalized_part1
             section_code = None
-            logger.debug(f"'{library_name}' → common subject: stage={stage_code}, subject={subject_code}")
-            return (stage_code, section_code, subject_code)
+            logger.debug(f"'{library_name}' → common: stage={stage_code}, subject={subject_code}, teacher={teacher_code}")
+            return (stage_code, section_code, subject_code, teacher_code, teacher_name)
 
         # Check for multi-part subject codes (PURE-MATH, APPLIED-MATH)
         if len(parts) >= 3 and part1 in ('PURE', 'APPLIED') and parts[2] == 'MATH':
-            # e.g., S1-PURE-MATH-AR-... or S1-APPLIED-MATH-EN-...
             subject_code = f"{part1}-MATH"
             section_code = None
-
-            # Check for section indicator in parts[3]
             if len(parts) >= 4 and parts[3] in SECTION_INDICATOR_TO_SECTION:
                 section_code = SECTION_INDICATOR_TO_SECTION[parts[3]]
-
-            logger.debug(f"'{library_name}' → multi-part subject: stage={stage_code}, section={section_code}, subject={subject_code}")
-            return (stage_code, section_code, subject_code)
+            logger.debug(f"'{library_name}' → multi-part: stage={stage_code}, section={section_code}, subject={subject_code}, teacher={teacher_code}")
+            return (stage_code, section_code, subject_code, teacher_code, teacher_name)
 
         # Single-part section subject (ISC, BIO, CH, PHYS, MATH, etc.)
         if normalized_part1 in SECTION_SUBJECT_CODES or part1 in SECTION_SUBJECT_CODES:
             subject_code = normalized_part1 if normalized_part1 in SECTION_SUBJECT_CODES else part1
             section_code = None
-
-            # Check for section indicator in parts[2]
             if len(parts) >= 3 and parts[2] in SECTION_INDICATOR_TO_SECTION:
                 section_code = SECTION_INDICATOR_TO_SECTION[parts[2]]
+            logger.debug(f"'{library_name}' → section subject: stage={stage_code}, section={section_code}, subject={subject_code}, teacher={teacher_code}")
+            return (stage_code, section_code, subject_code, teacher_code, teacher_name)
 
-            logger.debug(f"'{library_name}' → section subject: stage={stage_code}, section={section_code}, subject={subject_code}")
-            return (stage_code, section_code, subject_code)
-
-        # Unknown subject code - return what we have
+        # Unknown subject code
         logger.warning(f"Unknown subject code '{part1}' in '{library_name}'")
-        return (stage_code, None, normalized_part1)
+        return (stage_code, None, normalized_part1, teacher_code, teacher_name)
 
     except Exception as exc:
         logger.error(f"Error parsing library name '{library_name}': {exc}")
-        return (None, None, None)
-
+        return (None, None, None, None, None)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Payment calculation helpers
