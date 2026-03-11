@@ -131,8 +131,85 @@ const financialApi = {
     return response.data;
   },
 
-  getTeacherPayments: async (periodId) => {
+getTeacherPayments: async (periodId) => {
     const response = await api.get(`/teacher-payments/${periodId}`);
+    return response.data;
+  },
+
+  // Teacher Profiles
+  getTeacherProfiles: async () => {
+    const response = await api.get('/teacher-profiles/');
+    return response.data;
+  },
+  createTeacherProfile: async (data) => {
+    const response = await api.post('/teacher-profiles/', data);
+    return response.data;
+  },
+  updateTeacherProfile: async (id, data) => {
+    const response = await api.put(`/teacher-profiles/${id}`, data);
+    return response.data;
+  },
+  deleteTeacherProfile: async (id) => {
+    const response = await api.delete(`/teacher-profiles/${id}`);
+    return response.data;
+  },
+  autoLinkProfiles: async () => {
+    const response = await api.post('/teacher-profiles/auto-link');
+    return response.data;
+  },
+  getUnlinkedAssignments: async () => {
+    const response = await api.get('/teacher-profiles/unlinked');
+    return response.data;
+  },
+  manuallyLinkProfile: async (assignmentId, profileId) => {
+    const response = await api.put(`/teacher-assignments/${assignmentId}/link-profile`, {
+      teacher_profile_id: profileId,
+    });
+    return response.data;
+  },
+
+  // Calculation Audits
+  getCalculationAudits: async (periodId, stageId) => {
+    const response = await api.get(`/calculation-audits/${periodId}/${stageId}`);
+    return response.data;
+  },
+  acknowledgeAudit: async (auditId) => {
+    const response = await api.post(`/calculation-audits/${auditId}/acknowledge`, {});
+    return response.data;
+  },
+
+  // Finalizations
+  getFinalizationPreview: async (periodId) => {
+    const response = await api.get(`/finalizations/preview/${periodId}`);
+    return response.data;
+  },
+  submitFinalization: async (payload) => {
+    const response = await api.post('/finalizations/', payload);
+    return response.data;
+  },
+  getFinalizations: async (periodId) => {
+    const response = await api.get(`/finalizations/${periodId}`);
+    return response.data;
+  },
+  getTeacherFinalizationHistory: async (profileId) => {
+    const response = await api.get(`/finalizations/teacher/${profileId}`);
+    return response.data;
+  },
+
+  // Reports
+  generateReport: async (config) => {
+    const response = await api.post('/reports/generate', config);
+    return response.data;
+  },
+
+  // Dashboard
+  getDashboardSummary: async (periodId = null) => {
+    const params = periodId ? { period_id: periodId } : {};
+    const response = await api.get('/dashboard/summary', { params });
+    return response.data;
+  },
+  getDashboardComparison: async (payload) => {
+    const response = await api.post('/dashboard/comparison', payload);
     return response.data;
   },
 };
