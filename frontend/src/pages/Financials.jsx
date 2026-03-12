@@ -1654,15 +1654,20 @@ const renderFinalizationModal = () => {
 
     // Derive unique stages and subjects for filter dropdowns
     const finalizeStages   = [...new Map(allRows.map(r => [r.stage_id, { id: r.stage_id, code: r.stage_code, name: r.stage_name }])).values()];
-    const finalizeSubjects = [...new Map(allRows.map(r => [r.subject_id, { id: r.subject_id, name: r.subject_name }])).values()].filter(s=>s.id);
+    // Build subjects from subject_name since subject_id may not be present on finalization rows
+    const finalizeSubjects = [...new Map(
+      allRows
+        .filter(r => r.subject_name)
+        .map(r => [r.subject_name, { id: r.subject_name, name: r.subject_name }])
+    ).values()];
 
-    // Apply filters to rows
+// Apply filters to rows
     const filteredRows = allRows.filter(row => {
-      if (finalizeFilterStage   !== 'all' && String(row.stage_id)   !== finalizeFilterStage)   return false;
-      if (finalizeFilterSubject !== 'all' && String(row.subject_id) !== finalizeFilterSubject) return false;
+      if (finalizeFilterStage   !== 'all' && String(row.stage_id) !== finalizeFilterStage) return false;
+      if (finalizeFilterSubject !== 'all' && row.subject_name     !== finalizeFilterSubject) return false;
       return true;
     });
-
+  
     // Group filtered rows by teacher_profile_id
     const groupedByTeacher = {};
     filteredRows.forEach(row => {
@@ -1772,7 +1777,7 @@ const renderFinalizationModal = () => {
                     className="text-sm border rounded px-2 py-1.5 bg-white min-w-[130px]">
                     <option value="all">All Subjects</option>
                     {finalizeSubjects.map(s=>(
-                      <option key={s.id} value={String(s.id)}>{s.name}</option>
+                      <option key={s.id} value={s.name}>{s.name}</option>
                     ))}
                   </select>
                 </div>
@@ -1873,15 +1878,14 @@ const renderFinalizationModal = () => {
                               <div className="font-mono font-semibold text-orange-300">{fmtCurrency(totalCarryIn)}</div>
                             </div>
                           )}
-                          {/* Total Due with tooltip — using fixed-position tooltip trick */}
+                          {/* Total Due with tooltip — renders downward to avoid header clipping */}
                           <div className="text-right relative group">
                             <div className="text-slate-400 text-xs">Total Due ⓘ</div>
                             <div className="font-mono font-bold text-blue-300 underline decoration-dotted cursor-help">{fmtCurrency(totalDue)}</div>
-                            {/* Tooltip rendered above, using absolute + high z-index */}
-                            <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-[9999] pointer-events-none">
+                            <div className="absolute top-full right-0 mt-2 hidden group-hover:block z-[9999] pointer-events-none">
                               <div className="bg-gray-900 text-white rounded-xl px-4 py-3 shadow-2xl border border-gray-700 whitespace-nowrap">
+                                <div className="absolute bottom-full right-4 border-8 border-transparent border-b-gray-900"/>
                                 <SectionBreakdownTooltip rows={teacherGroup.rows}/>
-                                <div className="absolute top-full right-4 border-8 border-transparent border-t-gray-900"/>
                               </div>
                             </div>
                           </div>
