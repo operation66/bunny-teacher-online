@@ -710,27 +710,29 @@ const Settings = () => {
 
   // ── Teacher Profile Auto-Link handlers ──────────────────────────────────
 
-  const loadUnlinkedAssignments = useCallback(async () => {
+const loadUnlinkedAssignments = useCallback(async () => {
     setLoadingUnlinked(true);
     try {
-const [unlinked, profiles] = await Promise.all([
-        financialApi.getUnlinkedAssignments(),
-        financialApi.getTeacherProfiles(),
+      const [unlinked, profiles] = await Promise.all([
+        financialApi.getUnlinkedAssignments().catch(() => []),
+        financialApi.getTeacherProfiles().catch(() => []),
       ]);
       // Deduplicate by library_id (safety net in case backend returns duplicates)
       const seen = new Set();
-      const deduped = unlinked.filter(a => {
+      const deduped = (unlinked || []).filter(a => {
         if (seen.has(a.library_id)) return false;
         seen.add(a.library_id);
         return true;
       });
       setUnlinkedAssignments(deduped);
-      setTeacherProfilesList(profiles);
+      setTeacherProfilesList(profiles || []);
     } catch (e) {
       console.error('Error loading unlinked assignments:', e);
+      setTeacherProfilesList([]);
+      setUnlinkedAssignments([]);
     } finally { setLoadingUnlinked(false); }
   }, []);
-
+  
   const handleAutoLinkTeachers = async () => {
     setAutoLinking(true);
     setAutoLinkResult(null);
