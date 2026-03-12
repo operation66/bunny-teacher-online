@@ -281,6 +281,23 @@ class CalculationAuditSummary(BaseModel):
     class Config:
         orm_mode = True
 
+class CalculationAuditDetail(BaseModel):
+    id: int
+    period_id: int
+    stage_id: int
+    status: str
+    warnings: List[dict] = []
+    inputs_snapshot: dict = {}
+    outputs_snapshot: dict = {}
+    verification_status: str
+    verification_delta: Optional[float]
+    acknowledged: bool
+    acknowledged_at: Optional[datetime]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
 class AcknowledgeAuditRequest(BaseModel):
     user_id: Optional[int] = None
 
