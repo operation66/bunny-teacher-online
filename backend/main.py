@@ -1832,6 +1832,59 @@ def acknowledge_audit(
     db.commit()
     return {"success": True, "audit_id": audit_id}
 
+@app.get("/calculation-audits/{audit_id}/detail")
+def get_audit_detail(
+    audit_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Returns the full audit record including snapshots and formula breakdown."""
+    audit = db.query(CalculationAudit).filter(CalculationAudit.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
+
+    # Build per-section formula steps from inputs_snapshot
+    inputs = audit.inputs_snapshot or {}
+    outputs = audit.outputs_snapshot or {}
+    section_revenues = inputs.get("section_revenues", {})
+    watch_times = inputs.get("watch_time_map", inputs.get("watch_times", {}))
+
+    # Reconstruct formula steps per section from inputs snapshot
+    formula_steps = {}
+    for sec_id_str, rev_data in section_revenues.items():
+        formula_steps[sec_id_str] = {
+            "total_orders": rev_data.get("total_orders", 0),
+            "total_revenue_egp": rev_data.get("total_revenue_egp", 0),
+        }
+
+    # Build per-library output rows from outputs_snapshot
+    output_rows = []
+    for lib_id_str, data in outputs.items():
+        output_rows.append({
+            "library_id": lib_id_str,
+            "section_id": data.get("section_id"),
+            "final_payment": data.get("final_payment", 0),
+            "watch_time_percentage": data.get("watch_time_percentage", 0),
+        })
+    output_rows.sort(key=lambda x: x["final_payment"], reverse=True)
+
+    return {
+        "id": audit.id,
+        "period_id": audit.period_id,
+        "stage_id": audit.stage_id,
+        "status": audit.status,
+        "warnings": audit.warnings or [],
+        "inputs_snapshot": inputs,
+        "outputs_snapshot": outputs,
+        "formula_steps": formula_steps,
+        "output_rows": output_rows,
+        "verification_status": audit.verification_status,
+        "verification_delta": audit.verification_delta,
+        "acknowledged": audit.acknowledged,
+        "acknowledged_at": audit.acknowledged_at.isoformat() if audit.acknowledged_at else None,
+        "created_at": audit.created_at.isoformat() if audit.created_at else None,
+    }
+
 
 # ============================================
 # FINALIZATION ENDPOINTS
