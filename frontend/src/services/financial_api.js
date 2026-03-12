@@ -168,16 +168,20 @@ getTeacherPayments: async (periodId) => {
     return response.data;
   },
 
-  // Calculation Audits
+// Calculation Audits
   getCalculationAudits: async (periodId, stageId) => {
     const response = await api.get(`/calculation-audits/${periodId}/${stageId}`);
+    return response.data;
+  },
+  getAuditDetail: async (auditId) => {
+    const response = await api.get(`/calculation-audits/${auditId}/detail`);
     return response.data;
   },
   acknowledgeAudit: async (auditId) => {
     const response = await api.post(`/calculation-audits/${auditId}/acknowledge`, {});
     return response.data;
   },
-
+  
   // Finalizations
   getFinalizationPreview: async (periodId) => {
     const response = await api.get(`/finalizations/preview/${periodId}`);
