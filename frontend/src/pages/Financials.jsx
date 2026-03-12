@@ -155,6 +155,12 @@ const Financials = () => {
   const [auditAcknowledged, setAuditAcknowledged] = useState(false);
   const [acknowledging, setAcknowledging]     = useState(false);
 
+  // ── Audit detail panel ────────────────────────────────────────────────────
+  const [showAuditPanel, setShowAuditPanel]   = useState(false);
+  const [auditDetail, setAuditDetail]         = useState(null);
+  const [loadingAuditDetail, setLoadingAuditDetail] = useState(false);
+  const [auditHistory, setAuditHistory]       = useState([]);
+
 // ── NEW: Finalization modal ───────────────────────────────────────────────
   const [showFinalizationModal, setShowFinalizationModal] = useState(false);
   const [finalizationPreview, setFinalizationPreview]     = useState(null);
@@ -208,6 +214,7 @@ const Financials = () => {
     if(selectedPeriod && selectedStage) {
       loadFinancialData();
       loadLatestAudit();
+      loadAuditHistory(selectedPeriod, selectedStage);
       try {
         const saved = localStorage.getItem(EXCLUDED_KEY(selectedPeriod, selectedStage));
         setExcludedLibs(saved ? new Set(JSON.parse(saved)) : new Set());
@@ -248,6 +255,28 @@ const Financials = () => {
     }
   };
 
+  const loadAuditDetail = async (auditId) => {
+    if (!auditId) return;
+    setLoadingAuditDetail(true);
+    try {
+      const detail = await financialApi.getAuditDetail(auditId);
+      setAuditDetail(detail);
+    } catch(e) {
+      console.error('Failed to load audit detail', e);
+    } finally {
+      setLoadingAuditDetail(false);
+    }
+  };
+
+  const loadAuditHistory = async (periodId, stageId) => {
+    if (!periodId || !stageId) return;
+    try {
+      const history = await financialApi.getCalculationAudits(periodId, stageId);
+      setAuditHistory(history || []);
+    } catch(e) {
+      console.error('Failed to load audit history', e);
+    }
+  };
   const loadLatestAudit = async () => {
     if(!selectedPeriod || !selectedStage) return;
     try {
@@ -875,7 +904,7 @@ const Financials = () => {
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER: NEW — Audit banner
   // ─────────────────────────────────────────────────────────────────────────
-  const renderAuditBanner = () => {
+const renderAuditBanner = () => {
     if(!lastAudit) return null;
 
     const isFailed   = lastAudit.status === 'failed';
@@ -914,7 +943,7 @@ const Financials = () => {
               {(isFailed || isMismatch) && (
                 <span className="font-semibold text-red-800">
                   {isMismatch
-                    ? `Verification mismatch detected — delta: ${fmtCurrency(lastAudit.verification_delta)} EGP`
+                    ? `Verification mismatch — delta: ${fmtCurrency(lastAudit.verification_delta)} EGP`
                     : `${warnings.filter(w=>w.severity==='critical').length} critical issue(s) detected`
                   }
                 </span>
@@ -925,6 +954,17 @@ const Financials = () => {
             {lastAudit.acknowledged && (
               <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded">Acknowledged</span>
             )}
+            {/* View Audit Trail button */}
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                setShowAuditPanel(true);
+                loadAuditDetail(lastAudit.id);
+                loadAuditHistory(selectedPeriod, selectedStage);
+              }}
+              className="text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
+              <FileText className="w-3.5 h-3.5"/>View Audit Trail
+            </button>
             {auditExpanded ? <ChevronUp className="w-4 h-4 text-gray-500"/> : <ChevronDown className="w-4 h-4 text-gray-500"/>}
           </div>
         </div>
@@ -947,7 +987,7 @@ const Financials = () => {
           </div>
         )}
 
-        {/* Acknowledge checkbox */}
+        {/* Acknowledge row */}
         {!lastAudit.acknowledged && (warnings.length > 0 || isMismatch) && (
           <div className="px-4 py-3 border-t border-gray-200 flex items-center gap-3 bg-white/50">
             <input
@@ -974,6 +1014,382 @@ const Financials = () => {
     );
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER: Audit Trail Panel
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderAuditPanel = () => {
+    if (!showAuditPanel) return null;
+
+    const audit = auditDetail;
+    const warnings = audit?.warnings || [];
+    const hasErrors   = warnings.some(w => w.severity === 'critical');
+    const hasWarnings = warnings.some(w => w.severity === 'warning');
+
+    const statusBadge = !audit ? null : audit.status === 'passed'
+      ? <span className="text-xs bg-green-100 text-green-700 border border-green-300 px-2 py-0.5 rounded-full font-semibold">PASSED</span>
+      : audit.status === 'warnings'
+        ? <span className="text-xs bg-yellow-100 text-yellow-700 border border-yellow-300 px-2 py-0.5 rounded-full font-semibold">WARNINGS</span>
+        : <span className="text-xs bg-red-100 text-red-700 border border-red-300 px-2 py-0.5 rounded-full font-semibold">FAILED</span>;
+
+    const inputs = audit?.inputs_snapshot || {};
+    const sectionRevenues = inputs.section_revenues || {};
+    const watchTimes = inputs.watch_time_map || inputs.watch_times || {};
+    const excludedIds = inputs.excluded_library_ids || [];
+    const periodMonths = inputs.period_months || [];
+
+    const outputRows = audit?.output_rows || [];
+    const verificationDelta = audit?.verification_delta || 0;
+    const verificationOk = audit?.verification_status === 'matched';
+
+    // Derive total payment from outputs
+    const totalPaymentsFromOutputs = outputRows.reduce((s, r) => s + (r.final_payment || 0), 0);
+
+    // Derive expected from section revenues (sum of all revenues)
+    const totalRevenueFromInputs = Object.values(sectionRevenues).reduce(
+      (s, r) => s + (r.total_revenue_egp || 0), 0
+    );
+
+    return (
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-4 overflow-y-auto">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl my-4">
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50 rounded-t-xl">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-blue-600"/>
+                Calculation Audit Trail
+              </h2>
+              {audit && (
+                <div className="flex items-center gap-2 mt-1">
+                  {statusBadge}
+                  <span className="text-sm text-gray-500">
+                    Run #{audit.id} · {audit.created_at ? new Date(audit.created_at).toLocaleString() : ''}
+                  </span>
+                  {audit.acknowledged && (
+                    <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded">Acknowledged</span>
+                  )}
+                </div>
+              )}
+            </div>
+            <button onClick={() => { setShowAuditPanel(false); setAuditDetail(null); }}
+              className="text-gray-400 hover:text-gray-600 text-2xl font-bold leading-none">×</button>
+          </div>
+
+          <div className="max-h-[80vh] overflow-y-auto">
+
+            {/* Run history selector */}
+            {auditHistory.length > 0 && (
+              <div className="px-6 pt-4 pb-3 border-b bg-gray-50">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Calculation Runs ({auditHistory.length})
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {auditHistory.map(h => (
+                    <button
+                      key={h.id}
+                      onClick={() => loadAuditDetail(h.id)}
+                      className={`text-xs px-3 py-1.5 rounded-lg border font-mono transition-all flex items-center gap-1.5
+                        ${audit?.id === h.id
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}`}>
+                      #{h.id}
+                      <span className={`w-2 h-2 rounded-full ${
+                        h.status === 'passed' ? 'bg-green-400' :
+                        h.status === 'warnings' ? 'bg-yellow-400' : 'bg-red-400'
+                      }`}/>
+                      <span className="opacity-60 font-sans">
+                        {h.created_at ? new Date(h.created_at).toLocaleDateString() : ''}
+                      </span>
+                      {h.acknowledged && <span className="text-green-300">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {loadingAuditDetail ? (
+              <div className="p-16 text-center text-gray-400">
+                <div className="text-4xl mb-3">⏳</div>
+                Loading audit detail…
+              </div>
+            ) : !audit ? (
+              <div className="p-16 text-center text-gray-400">
+                <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-30"/>
+                No audit data available. Calculate payments first.
+              </div>
+            ) : (
+              <div className="px-6 py-5 space-y-6">
+
+                {/* ── OPTION A: Inputs Snapshot ── */}
+                <div>
+                  <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                    <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Option A</span>
+                    Inputs Snapshot
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                    {/* Section revenues */}
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide border-b">
+                        Section Revenues Used
+                      </div>
+                      <div className="divide-y">
+                        {Object.entries(sectionRevenues).length === 0 ? (
+                          <div className="px-4 py-3 text-sm text-gray-400">No revenue data recorded</div>
+                        ) : Object.entries(sectionRevenues).map(([secId, data]) => (
+                          <div key={secId} className="px-4 py-2.5 flex justify-between text-sm">
+                            <span className="text-gray-600">Section {secId}</span>
+                            <div className="text-right">
+                              <div className="font-mono font-semibold text-gray-900">
+                                {fmtCurrency(data.total_revenue_egp)} EGP
+                              </div>
+                              <div className="text-xs text-gray-400">{(data.total_orders||0).toLocaleString()} orders</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Period & exclusions */}
+                    <div className="space-y-3">
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide border-b">
+                          Period Months
+                        </div>
+                        <div className="px-4 py-3 flex flex-wrap gap-1.5">
+                          {periodMonths.length === 0
+                            ? <span className="text-sm text-gray-400">All months in period year</span>
+                            : periodMonths.map(m => (
+                                <span key={m} className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-mono">
+                                  {MONTH_LABELS[m.split('-')[1]]} {m.split('-')[0]}
+                                </span>
+                              ))}
+                        </div>
+                      </div>
+                      {excludedIds.length > 0 && (
+                        <div className="border rounded-lg overflow-hidden">
+                          <div className="bg-red-50 px-4 py-2 text-xs font-semibold text-red-600 uppercase tracking-wide border-b">
+                            Excluded Libraries ({excludedIds.length})
+                          </div>
+                          <div className="px-4 py-3 flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                            {excludedIds.map(id => (
+                              <span key={id} className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded font-mono">
+                                ID {id}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── OPTION A: Warnings ── */}
+                <div>
+                  <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                    <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Option A</span>
+                    Warnings & Errors
+                    {warnings.length === 0
+                      ? <span className="text-xs text-green-600 font-normal normal-case">— none detected ✓</span>
+                      : <span className="text-xs text-gray-500 font-normal normal-case">({warnings.length} total)</span>}
+                  </h3>
+                  {warnings.length === 0 ? (
+                    <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                      <CheckCircle className="w-5 h-5 text-green-500"/>
+                      <span className="text-sm text-green-700 font-medium">All checks passed — no warnings or errors</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {warnings.map((w, i) => (
+                        <div key={i} className={`rounded-lg border px-4 py-3 ${
+                          w.severity === 'critical'
+                            ? 'bg-red-50 border-red-200'
+                            : 'bg-yellow-50 border-yellow-200'
+                        }`}>
+                          <div className="flex items-start gap-2">
+                            <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                              w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
+                            }`}/>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                                <code className={`text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
+                                  w.severity === 'critical'
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-yellow-100 text-yellow-700'
+                                }`}>{w.code}</code>
+                                <span className={`text-xs font-semibold uppercase ${
+                                  w.severity === 'critical' ? 'text-red-600' : 'text-yellow-600'
+                                }`}>{w.severity}</span>
+                              </div>
+                              <p className={`text-sm ${
+                                w.severity === 'critical' ? 'text-red-800' : 'text-yellow-800'
+                              }`}>{w.message}</p>
+                              {w.library_id && (
+                                <div className="mt-1 text-xs text-gray-500 font-mono">
+                                  Library ID: {w.library_id} · {w.library_name}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── OPTION A: Outputs Snapshot ── */}
+                {outputRows.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                      <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Option A</span>
+                      Outputs Snapshot ({outputRows.length} payment records)
+                    </h3>
+                    <div className="border rounded-lg overflow-hidden">
+                      <div className="overflow-x-auto max-h-52">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50 sticky top-0 border-b">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-600">Library ID</th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-600">Section</th>
+                              <th className="text-right px-3 py-2 font-semibold text-gray-600">Watch %</th>
+                              <th className="text-right px-3 py-2 font-semibold text-gray-600">Payment (EGP)</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {outputRows.map((row, i) => (
+                              <tr key={i} className="border-b hover:bg-gray-50">
+                                <td className="px-3 py-1.5 font-mono text-gray-700">{row.library_id}</td>
+                                <td className="px-3 py-1.5 text-gray-600">Sec {row.section_id}</td>
+                                <td className="px-3 py-1.5 text-right font-mono">
+                                  {((row.watch_time_percentage || 0) * 100).toFixed(2)}%
+                                </td>
+                                <td className="px-3 py-1.5 text-right font-mono font-bold text-green-700">
+                                  {fmtCurrency(row.final_payment)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="bg-gray-50 border-t-2 border-gray-300 font-bold">
+                              <td colSpan={3} className="px-3 py-2 text-right text-gray-700 text-xs">Total Payments:</td>
+                              <td className="px-3 py-2 text-right font-mono text-green-700">
+                                {fmtCurrency(totalPaymentsFromOutputs)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── OPTION B: Cross-Validation ── */}
+                <div>
+                  <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex items-center gap-2">
+                    <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-xs font-bold">Option B</span>
+                    Cross-Validation
+                  </h3>
+                  <div className={`rounded-xl border p-5 ${
+                    verificationOk
+                      ? 'bg-green-50 border-green-200'
+                      : 'bg-red-50 border-red-200'
+                  }`}>
+                    <div className="flex items-start gap-4">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        verificationOk ? 'bg-green-200' : 'bg-red-200'
+                      }`}>
+                        {verificationOk
+                          ? <CheckCircle className="w-5 h-5 text-green-700"/>
+                          : <XCircle className="w-5 h-5 text-red-700"/>}
+                      </div>
+                      <div className="flex-1">
+                        <div className={`font-bold text-base mb-1 ${
+                          verificationOk ? 'text-green-800' : 'text-red-800'
+                        }`}>
+                          {verificationOk
+                            ? 'Independent recalculation matches stored payments'
+                            : 'Discrepancy detected between calculation and stored payments'}
+                        </div>
+                        <p className={`text-sm mb-3 ${
+                          verificationOk ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {verificationOk
+                            ? 'The system re-derived every payment from raw watch-time data and found no discrepancies. The stored values are verified correct.'
+                            : `The re-calculation produced a different sum. Delta: ${fmtCurrency(verificationDelta)} EGP. This may indicate a rounding issue or a bug — do not finalize until resolved.`}
+                        </p>
+                        <div className="grid grid-cols-3 gap-4">
+                          <div className="bg-white/70 rounded-lg px-3 py-2.5 text-center">
+                            <div className="text-xs text-gray-500 mb-0.5">Stored Payments Sum</div>
+                            <div className="font-mono font-bold text-gray-900">{fmtCurrency(totalPaymentsFromOutputs)}</div>
+                          </div>
+                          <div className="bg-white/70 rounded-lg px-3 py-2.5 text-center">
+                            <div className="text-xs text-gray-500 mb-0.5">Total Revenue Input</div>
+                            <div className="font-mono font-bold text-gray-900">{fmtCurrency(totalRevenueFromInputs)}</div>
+                          </div>
+                          <div className={`rounded-lg px-3 py-2.5 text-center ${
+                            verificationOk ? 'bg-green-200/60' : 'bg-red-200/60'
+                          }`}>
+                            <div className="text-xs text-gray-500 mb-0.5">Verification Delta</div>
+                            <div className={`font-mono font-bold ${
+                              verificationOk ? 'text-green-700' : 'text-red-700'
+                            }`}>
+                              {fmtCurrency(verificationDelta)}
+                              {verificationOk && <span className="ml-1 text-green-600">✓</span>}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Acknowledge from panel ── */}
+                {!audit.acknowledged && warnings.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0"/>
+                    <div className="flex-1 text-sm text-amber-800">
+                      Warnings must be acknowledged before finalization is allowed.
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        await handleAcknowledgeAudit();
+                        setAuditDetail(prev => prev ? {...prev, acknowledged: true} : prev);
+                      }}
+                      disabled={acknowledging}
+                      className="bg-amber-600 hover:bg-amber-700 text-white flex-shrink-0">
+                      {acknowledging ? 'Saving…' : 'Acknowledge & Unlock Finalization'}
+                    </Button>
+                  </div>
+                )}
+                {audit.acknowledged && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2 text-sm text-green-700">
+                    <CheckCircle className="w-4 h-4 text-green-500"/>
+                    Warnings acknowledged — finalization is unlocked.
+                    {audit.acknowledged_at && (
+                      <span className="text-green-500 text-xs ml-1">
+                        ({new Date(audit.acknowledged_at).toLocaleString()})
+                      </span>
+                    )}
+                  </div>
+                )}
+
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t bg-gray-50 rounded-b-xl flex justify-end">
+            <Button variant="outline" onClick={() => { setShowAuditPanel(false); setAuditDetail(null); }}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+  
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER: Watch time cell with tooltip
   // ─────────────────────────────────────────────────────────────────────────
@@ -2373,6 +2789,7 @@ const renderFinalizationModal = () => {
       {renderLibraryModal()}
       {renderFinalizationModal()}
       {renderReportModal()}
+      {renderAuditPanel()}
 
       <div className="max-w-7xl mx-auto space-y-5">
         <div>
