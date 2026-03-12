@@ -458,13 +458,15 @@ const Financials = () => {
     try {
       const preview = await financialApi.getFinalizationPreview(selectedPeriod);
       setFinalizationPreview(preview);
-      // Initialize transfer % inputs
+      // Initialize merged transfer % inputs (one per teacher)
       const inputs = {};
       preview.rows.forEach(row => {
-        const key = `${row.teacher_profile_id}-${row.stage_id}-${row.section_id}`;
-        inputs[key] = row.existing_transfer_percentage != null
-          ? (row.existing_transfer_percentage * 100).toFixed(0)
-          : '100';
+        const mergedKey = `merged-${row.teacher_profile_id}`;
+        if (!(mergedKey in inputs)) {
+          inputs[mergedKey] = row.existing_transfer_percentage != null
+            ? (row.existing_transfer_percentage * 100).toFixed(0)
+            : '100';
+        }
       });
       setFinalizationInputs(inputs);
     } catch(e) {
@@ -485,8 +487,19 @@ const Financials = () => {
     if(!finalizationPreview) return;
     setSubmittingFinalization(true);
     try {
+      // Group rows by teacher to get the merged transfer %
+      const byTeacher = {};
+      (finalizationPreview.rows || []).forEach(row => {
+        const k = String(row.teacher_profile_id);
+        if (!byTeacher[k]) byTeacher[k] = [];
+        byTeacher[k].push(row);
+      });
+
       const rows = (finalizationPreview.rows || []).map(row => {
-        const { pct } = getFinalizationRow(row);
+        // Use merged key for this teacher
+        const mergedKey = `merged-${row.teacher_profile_id}`;
+        const pctStr = finalizationInputs[mergedKey] ?? '100';
+        const pct = Math.min(100, Math.max(0, parseFloat(pctStr) || 0)) / 100;
         return {
           teacher_profile_id: row.teacher_profile_id,
           stage_id: row.stage_id,
@@ -495,6 +508,7 @@ const Financials = () => {
           notes: null,
         };
       });
+
       await financialApi.submitFinalization({
         period_id: selectedPeriod,
         audit_id: lastAudit?.id || null,
@@ -506,7 +520,6 @@ const Financials = () => {
       showMsg('Error submitting finalization: '+(e.response?.data?.detail||e.message),'error');
     } finally { setSubmittingFinalization(false); }
   };
-
   // ── Sort ──────────────────────────────────────────────────────────────────
   const handleSort = (col) => {
     setSortDir(prev => sortCol===col ? (prev==='asc'?'desc':'asc') : 'asc');
@@ -1634,72 +1647,91 @@ const renderCalculateBar = () => {
 // ─────────────────────────────────────────────────────────────────────────
   // RENDER: NEW — Finalization modal
   // ─────────────────────────────────────────────────────────────────────────
-  const renderFinalizationModal = () => {
+const renderFinalizationModal = () => {
     if(!showFinalizationModal) return null;
 
     const allRows = finalizationPreview?.rows || [];
 
     // Derive unique stages and subjects for filter dropdowns
-    const finalizeStages   = [...new Map(allRows.map(r => [r.stage_id,   { id: r.stage_id,   code: r.stage_code,   name: r.stage_name   }])).values()];
+    const finalizeStages   = [...new Map(allRows.map(r => [r.stage_id, { id: r.stage_id, code: r.stage_code, name: r.stage_name }])).values()];
     const finalizeSubjects = [...new Map(allRows.map(r => [r.subject_id, { id: r.subject_id, name: r.subject_name }])).values()].filter(s=>s.id);
 
-    // Apply filters
+    // Apply filters to rows
     const filteredRows = allRows.filter(row => {
       if (finalizeFilterStage   !== 'all' && String(row.stage_id)   !== finalizeFilterStage)   return false;
       if (finalizeFilterSubject !== 'all' && String(row.subject_id) !== finalizeFilterSubject) return false;
       return true;
     });
 
-    // Group filtered rows by teacher → stage → sections
+    // Group filtered rows by teacher_profile_id
     const groupedByTeacher = {};
     filteredRows.forEach(row => {
-      const k = row.teacher_profile_id;
+      const k = String(row.teacher_profile_id);
       if(!groupedByTeacher[k]) {
-        groupedByTeacher[k] = { teacher_code: row.teacher_code, teacher_name: row.teacher_name, byStage: {} };
+        groupedByTeacher[k] = {
+          teacher_profile_id: row.teacher_profile_id,
+          teacher_code: row.teacher_code,
+          teacher_name: row.teacher_name,
+          rows: [],
+        };
       }
-      const sk = row.stage_id;
-      if(!groupedByTeacher[k].byStage[sk]) {
-        groupedByTeacher[k].byStage[sk] = { stage_code: row.stage_code, stage_name: row.stage_name, rows: [] };
-      }
-      groupedByTeacher[k].byStage[sk].rows.push(row);
+      groupedByTeacher[k].rows.push(row);
     });
 
-    const anyCarryOut = allRows.some(row => { const {carryOut} = getFinalizationRow(row); return carryOut > 0.01; });
-
-    // Tooltip component for section breakdown on hover
-    const BreakdownTooltip = ({ rows }) => {
-      const sections = rows.map(row => {
-        const { transferAmount, carryOut } = getFinalizationRow(row);
-        return { section: `${row.section_code} — ${row.section_name}`, total_due: row.total_due, transferAmount, carryOut };
-      });
-      return (
-        <div className="min-w-[260px] space-y-2">
-          {sections.map((s, i) => (
-            <div key={i} className="text-xs">
-              <div className="font-semibold text-gray-200 mb-0.5">{s.section}</div>
-              <div className="flex justify-between gap-4">
-                <span className="text-gray-400">Total Due</span>
-                <span className="font-mono text-white">{fmtCurrency(s.total_due)}</span>
-              </div>
-              <div className="flex justify-between gap-4">
-                <span className="text-gray-400">Transfer</span>
-                <span className="font-mono text-green-300">{fmtCurrency(s.transferAmount)}</span>
-              </div>
-              {s.carryOut > 0.01 && (
-                <div className="flex justify-between gap-4">
-                  <span className="text-gray-400">Carry Fwd</span>
-                  <span className="font-mono text-orange-300">{fmtCurrency(s.carryOut)}</span>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      );
+    // For each teacher, compute a single merged key for the transfer % input
+    // key = teacher_profile_id (since we merge all sections)
+    const getMergedRow = (teacherGroup) => {
+      const rows = teacherGroup.rows;
+      const mergedKey = `merged-${teacherGroup.teacher_profile_id}`;
+      const pctStr = finalizationInputs[mergedKey] ?? '100';
+      const pct = Math.min(100, Math.max(0, parseFloat(pctStr) || 0)) / 100;
+      const totalGross    = rows.reduce((s,r) => s + r.gross_payment, 0);
+      const totalCarryIn  = rows.reduce((s,r) => s + r.carry_forward_in, 0);
+      const totalDue      = rows.reduce((s,r) => s + r.total_due, 0);
+      const transferAmount = totalDue * pct;
+      const carryOut      = totalDue - transferAmount;
+      return { mergedKey, pct, totalGross, totalCarryIn, totalDue, transferAmount, carryOut };
     };
+
+    // Sections info chips for a teacher (unique stage+section+subject combos)
+    const getSectionChips = (rows) => {
+      return rows.map(r => ({
+        stage: r.stage_code,
+        section: r.section_code,
+        subject: r.subject_name,
+        amount: r.gross_payment,
+      }));
+    };
+
+    const anyCarryOut = Object.values(groupedByTeacher).some(tg => getMergedRow(tg).carryOut > 0.01);
+
+    // Section breakdown tooltip content
+    const SectionBreakdownTooltip = ({ rows }) => (
+      <div className="min-w-[280px] space-y-2 p-1">
+        {rows.map((r, i) => (
+          <div key={i} className="text-xs border-b border-gray-700 pb-1.5 last:border-0 last:pb-0">
+            <div className="font-semibold text-gray-200 mb-1">
+              {r.stage_code} · {r.section_code}
+              {r.subject_name && <span className="text-purple-300 ml-1">({r.subject_name})</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+              <span className="text-gray-400">Gross</span>
+              <span className="font-mono text-right text-white">{fmtCurrency(r.gross_payment)}</span>
+              {r.carry_forward_in > 0 && <>
+                <span className="text-gray-400">Carry In</span>
+                <span className="font-mono text-right text-orange-300">{fmtCurrency(r.carry_forward_in)}</span>
+              </>}
+              <span className="text-gray-400">Total Due</span>
+              <span className="font-mono text-right text-blue-300">{fmtCurrency(r.total_due)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
 
     return (
       <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-6 overflow-y-auto">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl my-4">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl my-4">
 
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50 rounded-t-xl">
@@ -1717,13 +1749,15 @@ const renderCalculateBar = () => {
             <div className="p-12 text-center text-gray-500">Loading finalization data…</div>
           ) : (
             <>
-              {/* Filter bar */}
-              <div className="px-6 py-3 border-b bg-gray-50 flex items-center gap-4 flex-wrap">
+              {/* ── Filter bar — outside scroll container so dropdowns are never clipped ── */}
+              <div className="px-6 py-3 border-b bg-white flex items-center gap-4 flex-wrap">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filter:</span>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Stage</label>
-                  <select value={finalizeFilterStage} onChange={e=>setFinalizeFilterStage(e.target.value)}
-                    className="text-xs border rounded px-2 py-1.5 bg-white">
+                  <select
+                    value={finalizeFilterStage}
+                    onChange={e => setFinalizeFilterStage(e.target.value)}
+                    className="text-sm border rounded px-2 py-1.5 bg-white min-w-[130px]">
                     <option value="all">All Stages</option>
                     {finalizeStages.map(s=>(
                       <option key={s.id} value={String(s.id)}>{s.name} ({s.code})</option>
@@ -1732,8 +1766,10 @@ const renderCalculateBar = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-500">Subject</label>
-                  <select value={finalizeFilterSubject} onChange={e=>setFinalizeFilterSubject(e.target.value)}
-                    className="text-xs border rounded px-2 py-1.5 bg-white">
+                  <select
+                    value={finalizeFilterSubject}
+                    onChange={e => setFinalizeFilterSubject(e.target.value)}
+                    className="text-sm border rounded px-2 py-1.5 bg-white min-w-[130px]">
                     <option value="all">All Subjects</option>
                     {finalizeSubjects.map(s=>(
                       <option key={s.id} value={String(s.id)}>{s.name}</option>
@@ -1742,27 +1778,25 @@ const renderCalculateBar = () => {
                 </div>
                 <span className="ml-auto text-xs text-gray-400">
                   {Object.keys(groupedByTeacher).length} teacher{Object.keys(groupedByTeacher).length!==1?'s':''}
-                  · {filteredRows.length} row{filteredRows.length!==1?'s':''}
+                  {' · '}{filteredRows.length} section-row{filteredRows.length!==1?'s':''}
                 </span>
               </div>
 
-              <div className="px-6 py-4 max-h-[65vh] overflow-y-auto space-y-3">
+              {/* ── Scrollable content ── */}
+              <div className="px-6 py-4 overflow-y-auto space-y-3" style={{maxHeight:'60vh'}}>
 
-                {/* Warning: missing next period */}
+                {/* Warning: no next period */}
                 {anyCarryOut && !finalizationPreview?.next_period_exists && (
                   <div className="flex items-start gap-3 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3">
                     <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5"/>
                     <div className="flex-1">
                       <p className="text-sm font-semibold text-amber-800">
-                        No next period found. Carry-forward amounts will be stored but have no destination period yet.
+                        No next period found — carry-forward amounts will be stored without a destination period.
                       </p>
                       <div className="flex gap-2 mt-2">
                         <button onClick={()=>setShowCreatePeriodInline(!showCreatePeriodInline)}
                           className="text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded">
                           {showCreatePeriodInline ? 'Hide Form' : 'Create Period Now'}
-                        </button>
-                        <button className="text-xs font-semibold border border-amber-400 text-amber-700 px-3 py-1.5 rounded hover:bg-amber-100">
-                          Proceed Anyway
                         </button>
                       </div>
                       {showCreatePeriodInline && (
@@ -1793,11 +1827,8 @@ const renderCalculateBar = () => {
                             })}
                           </div>
                           <div className="flex gap-2">
-                            <Button type="submit" className="bg-green-600 hover:bg-green-700 text-xs px-3 py-1.5 h-auto">
-                              Create Period
-                            </Button>
-                            <Button type="button" variant="outline" onClick={()=>setShowCreatePeriodInline(false)}
-                              className="text-xs px-3 py-1.5 h-auto">Cancel</Button>
+                            <Button type="submit" className="bg-green-600 hover:bg-green-700 text-xs h-8">Create Period</Button>
+                            <Button type="button" variant="outline" onClick={()=>setShowCreatePeriodInline(false)} className="text-xs h-8">Cancel</Button>
                           </div>
                         </form>
                       )}
@@ -1805,133 +1836,140 @@ const renderCalculateBar = () => {
                   </div>
                 )}
 
-                {/* Teacher blocks */}
-                {Object.entries(groupedByTeacher).map(([profileId, teacher]) => {
-                  const isCollapsed = collapsedFinalizeTeachers.has(profileId);
-                  const allTeacherRows = Object.values(teacher.byStage).flatMap(s => s.rows);
-
-                  // Merged totals across all stages/sections for this teacher
-                  const teacherTotalGross    = allTeacherRows.reduce((s,r)=>s+r.gross_payment,0);
-                  const teacherTotalCarryIn  = allTeacherRows.reduce((s,r)=>s+r.carry_forward_in,0);
-                  const teacherTotalDue      = allTeacherRows.reduce((s,r)=>s+r.total_due,0);
-                  const teacherTotalTransfer = allTeacherRows.reduce((s,r)=>s+getFinalizationRow(r).transferAmount,0);
-                  const teacherTotalCarryOut = allTeacherRows.reduce((s,r)=>s+getFinalizationRow(r).carryOut,0);
+                {/* ── Teacher rows ── */}
+                {Object.values(groupedByTeacher).map(teacherGroup => {
+                  const isCollapsed = collapsedFinalizeTeachers.has(String(teacherGroup.teacher_profile_id));
+                  const { mergedKey, pct, totalGross, totalCarryIn, totalDue, transferAmount, carryOut } = getMergedRow(teacherGroup);
+                  const chips = getSectionChips(teacherGroup.rows);
 
                   return (
-                    <div key={profileId} className="border rounded-lg overflow-hidden shadow-sm">
-                      {/* Teacher header row — collapsible + shows merged totals */}
+                    <div key={teacherGroup.teacher_profile_id} className="border rounded-xl overflow-visible shadow-sm">
+
+                      {/* ── Teacher header — collapsible ── */}
                       <div
-                        className="px-4 py-3 bg-slate-700 text-white flex items-center justify-between cursor-pointer hover:bg-slate-600 transition-colors"
+                        className="px-4 py-3 bg-slate-700 text-white flex items-center justify-between cursor-pointer hover:bg-slate-600 transition-colors rounded-t-xl"
                         onClick={()=>setCollapsedFinalizeTeachers(prev=>{
                           const s=new Set(prev);
-                          s.has(profileId)?s.delete(profileId):s.add(profileId);
+                          const k=String(teacherGroup.teacher_profile_id);
+                          s.has(k)?s.delete(k):s.add(k);
                           return s;
                         })}>
                         <div className="flex items-center gap-2">
-                          {isCollapsed ? <ChevronDown className="w-4 h-4 text-slate-400"/> : <ChevronUp className="w-4 h-4 text-slate-400"/>}
+                          {isCollapsed
+                            ? <ChevronDown className="w-4 h-4 text-slate-400"/>
+                            : <ChevronUp className="w-4 h-4 text-slate-400"/>}
                           <Users className="w-4 h-4"/>
-                          <span className="font-semibold">{teacher.teacher_name}</span>
-                          <span className="text-slate-300 font-mono text-sm">({teacher.teacher_code})</span>
-                          {allTeacherRows.some(r=>r.already_finalized) && (
-                            <span className="text-xs bg-green-500 text-white px-1.5 py-0.5 rounded ml-1">Finalized</span>
-                          )}
+                          <span className="font-semibold">{teacherGroup.teacher_name}</span>
+                          <span className="text-slate-300 font-mono text-sm">({teacherGroup.teacher_code})</span>
                         </div>
-                        {/* Merged totals summary in header */}
                         <div className="flex items-center gap-5 text-sm">
                           <div className="text-right">
                             <div className="text-slate-400 text-xs">Gross</div>
-                            <div className="font-mono font-semibold text-white">{fmtCurrency(teacherTotalGross)}</div>
+                            <div className="font-mono font-semibold">{fmtCurrency(totalGross)}</div>
                           </div>
-                          {teacherTotalCarryIn > 0 && (
+                          {totalCarryIn > 0 && (
                             <div className="text-right">
                               <div className="text-slate-400 text-xs">Carry In</div>
-                              <div className="font-mono font-semibold text-orange-300">{fmtCurrency(teacherTotalCarryIn)}</div>
+                              <div className="font-mono font-semibold text-orange-300">{fmtCurrency(totalCarryIn)}</div>
                             </div>
                           )}
-                          <Tooltip content={<BreakdownTooltip rows={allTeacherRows}/>}>
-                            <div className="text-right cursor-help">
-                              <div className="text-slate-400 text-xs">Total Due ⓘ</div>
-                              <div className="font-mono font-bold text-blue-300 underline decoration-dotted">{fmtCurrency(teacherTotalDue)}</div>
+                          {/* Total Due with tooltip — using fixed-position tooltip trick */}
+                          <div className="text-right relative group">
+                            <div className="text-slate-400 text-xs">Total Due ⓘ</div>
+                            <div className="font-mono font-bold text-blue-300 underline decoration-dotted cursor-help">{fmtCurrency(totalDue)}</div>
+                            {/* Tooltip rendered above, using absolute + high z-index */}
+                            <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-[9999] pointer-events-none">
+                              <div className="bg-gray-900 text-white rounded-xl px-4 py-3 shadow-2xl border border-gray-700 whitespace-nowrap">
+                                <SectionBreakdownTooltip rows={teacherGroup.rows}/>
+                                <div className="absolute top-full right-4 border-8 border-transparent border-t-gray-900"/>
+                              </div>
                             </div>
-                          </Tooltip>
+                          </div>
                           <div className="text-right">
                             <div className="text-slate-400 text-xs">Transfer</div>
-                            <div className="font-mono font-bold text-green-300">{fmtCurrency(teacherTotalTransfer)}</div>
+                            <div className="font-mono font-bold text-green-300">{fmtCurrency(transferAmount)}</div>
                           </div>
-                          {teacherTotalCarryOut > 0.01 && (
+                          {carryOut > 0.01 && (
                             <div className="text-right">
                               <div className="text-slate-400 text-xs">Carry Out</div>
-                              <div className="font-mono font-semibold text-orange-300">{fmtCurrency(teacherTotalCarryOut)}</div>
+                              <div className="font-mono font-semibold text-orange-300">{fmtCurrency(carryOut)}</div>
                             </div>
                           )}
                         </div>
                       </div>
 
-                      {/* Expanded section detail — hidden when collapsed */}
-                      {!isCollapsed && Object.entries(teacher.byStage).map(([stageId, stage]) => (
-                        <div key={stageId}>
-                          <div className="px-4 py-2 bg-slate-100 text-slate-700 text-sm font-semibold border-t flex items-center gap-2">
-                            <span>Stage {stage.stage_code} — {stage.stage_name}</span>
+                      {/* ── Expanded body: section info chips + single transfer % ── */}
+                      {!isCollapsed && (
+                        <div className="bg-white px-4 py-4 rounded-b-xl space-y-4">
+
+                          {/* Section info chips row */}
+                          <div className="flex flex-wrap gap-2">
+                            {chips.map((chip, i) => (
+                              <div key={i} className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 rounded-lg px-3 py-1.5 text-xs">
+                                <span className="font-mono font-bold text-blue-700">{chip.stage}</span>
+                                <span className="text-gray-400">·</span>
+                                <span className={`font-semibold px-1.5 py-0.5 rounded
+                                  ${chip.section.toUpperCase().includes('GEN') ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                                  {chip.section}
+                                </span>
+                                {chip.subject && (
+                                  <>
+                                    <span className="text-gray-400">·</span>
+                                    <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">{chip.subject}</span>
+                                  </>
+                                )}
+                                <span className="text-gray-500 ml-1">{fmtCurrency(chip.amount)}</span>
+                              </div>
+                            ))}
                           </div>
-                          {stage.rows.map(row => {
-                            const {key, pct, transferAmount, carryOut} = getFinalizationRow(row);
-                            return (
-                              <div key={key} className="px-4 py-3 border-t bg-white">
-                                <div className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide flex items-center gap-2">
-                                  <span>{row.section_code} — {row.section_name}</span>
-                                  {row.subject_name && (
-                                    <span className="normal-case bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-medium">
-                                      {row.subject_name}
-                                    </span>
+
+                          {/* Single transfer % + computed fields */}
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 items-end bg-gray-50 border rounded-lg px-4 py-3">
+                            <div>
+                              <div className="text-xs text-gray-500 mb-1">Total Gross</div>
+                              <div className="font-bold text-gray-800">{fmtCurrency(totalGross)} EGP</div>
+                            </div>
+                            {totalCarryIn > 0 && (
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Carry Forward In</div>
+                                <div className="font-semibold text-orange-600">{fmtCurrency(totalCarryIn)} EGP</div>
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-xs text-gray-500 mb-1">Total Due</div>
+                              <div className="font-bold text-blue-700">{fmtCurrency(totalDue)} EGP</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-500 mb-1">Transfer %</div>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number" min="0" max="100"
+                                  value={finalizationInputs[mergedKey] ?? '100'}
+                                  onChange={e => setFinalizationInputs(prev=>({...prev,[mergedKey]:e.target.value}))}
+                                  className="w-16 border rounded px-2 py-1.5 text-center text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                  onClick={e => e.stopPropagation()}
+                                />
+                                <span className="text-gray-500">%</span>
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-500 mb-1">Transfer Amount</div>
+                              <div className="font-bold text-green-700">{fmtCurrency(transferAmount)} EGP</div>
+                            </div>
+                            {carryOut > 0.01 && (
+                              <div>
+                                <div className="text-xs text-gray-500 mb-1">Carry Forward Out</div>
+                                <div className="font-semibold text-orange-600">
+                                  {fmtCurrency(carryOut)} EGP
+                                  {finalizationPreview?.next_period_name && (
+                                    <div className="text-xs text-gray-400 font-normal">→ {finalizationPreview.next_period_name}</div>
                                   )}
-                                  {row.already_finalized && (
-                                    <span className="normal-case bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Already finalized</span>
-                                  )}
-                                </div>
-                                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-sm">
-                                  <div>
-                                    <div className="text-xs text-gray-500">Gross Payment</div>
-                                    <div className="font-bold text-gray-900">{fmtCurrency(row.gross_payment)} EGP</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-xs text-gray-500">Carry Forward In</div>
-                                    <div className={`font-semibold ${row.carry_forward_in>0?'text-orange-600':'text-gray-400'}`}>
-                                      {fmtCurrency(row.carry_forward_in)} EGP
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="text-xs text-gray-500">Total Due</div>
-                                    <div className="font-bold text-blue-700">{fmtCurrency(row.total_due)} EGP</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-xs text-gray-500 mb-1">Transfer %</div>
-                                    <div className="flex items-center gap-1">
-                                      <input type="number" min="0" max="100"
-                                        value={finalizationInputs[key] || '100'}
-                                        onChange={e=>setFinalizationInputs(prev=>({...prev,[key]:e.target.value}))}
-                                        className="w-16 border rounded px-2 py-1 text-center text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-                                      <span className="text-gray-500 text-sm">%</span>
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="text-xs text-gray-500">Transfer Amount</div>
-                                    <div className="font-bold text-green-700">{fmtCurrency(transferAmount)} EGP</div>
-                                  </div>
-                                  <div>
-                                    <div className="text-xs text-gray-500">Carry Forward Out</div>
-                                    <div className={`font-semibold ${carryOut>0?'text-orange-600':'text-gray-400'}`}>
-                                      {fmtCurrency(carryOut)} EGP
-                                      {carryOut>0 && finalizationPreview?.next_period_name && (
-                                        <div className="text-xs text-gray-400 font-normal">→ {finalizationPreview.next_period_name}</div>
-                                      )}
-                                    </div>
-                                  </div>
                                 </div>
                               </div>
-                            );
-                          })}
+                            )}
+                          </div>
                         </div>
-                      ))}
+                      )}
                     </div>
                   );
                 })}
@@ -1939,7 +1977,9 @@ const renderCalculateBar = () => {
                 {filteredRows.length === 0 && (
                   <div className="text-center py-12 text-gray-500">
                     <CheckCircle className="w-12 h-12 mx-auto mb-3 text-gray-300"/>
-                    <div>{allRows.length === 0 ? 'No teacher payments found. Calculate payments first.' : 'No results match the current filters.'}</div>
+                    <div>{allRows.length === 0
+                      ? 'No teacher payments found. Calculate payments first.'
+                      : 'No results match the current filters.'}</div>
                   </div>
                 )}
               </div>
@@ -1951,7 +1991,9 @@ const renderCalculateBar = () => {
                   onClick={handleSubmitFinalization}
                   disabled={submittingFinalization || allRows.length === 0}
                   className="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-6">
-                  {submittingFinalization ? 'Saving…' : `Finalize ${Object.keys(groupedByTeacher).length} Teacher${Object.keys(groupedByTeacher).length!==1?'s':''}`}
+                  {submittingFinalization
+                    ? 'Saving…'
+                    : `Finalize ${Object.keys(groupedByTeacher).length} Teacher${Object.keys(groupedByTeacher).length!==1?'s':''}`}
                 </Button>
               </div>
             </>
@@ -1960,7 +2002,7 @@ const renderCalculateBar = () => {
       </div>
     );
   };
-
+  
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER: NEW — Report builder modal
   // ─────────────────────────────────────────────────────────────────────────
