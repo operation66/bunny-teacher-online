@@ -312,7 +312,7 @@ class FinalizationRowInput(BaseModel):
 
 class SubmitFinalizationRequest(BaseModel):
     period_id: int
-    audit_id: int
+    audit_id: Optional[int] = None
     rows: List[FinalizationRowInput]
 
 class FinalizationPreviewRow(BaseModel):
