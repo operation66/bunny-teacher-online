@@ -194,7 +194,10 @@ const Financials = () => {
   const [reportData, setReportData]             = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [teacherProfiles, setTeacherProfiles]   = useState([]);
-  const [finalizationsMap, setFinalizationsMap] = useState({}); // key: teacher_profile_id, value: finalization record
+  const [finalizationsMap, setFinalizationsMap] = useState({});
+  const [showResetModal, setShowResetModal]     = useState(false);
+  const [resetting, setResetting]               = useState(false);
+  const [resetSummary, setResetSummary]         = useState(null);
 
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -575,6 +578,34 @@ const Financials = () => {
   }
 };
 
+  // ── Reset period stage ────────────────────────────────────────────────────
+  const handleResetStage = async () => {
+    if(!selectedPeriod || !selectedStage) return;
+    setResetting(true);
+    try {
+      const result = await financialApi.resetPeriodStage(selectedPeriod, selectedStage);
+      setResetSummary(result);
+      setShowResetModal(false);
+      setLastAudit(null);
+      setAuditAcknowledged(false);
+      setAuditHistory([]);
+      setFinancialData(prev => prev ? {...prev, teacher_payments: []} : prev);
+      setFinalizationsMap({});
+      showMsg(
+        `Reset complete — deleted ${result.deleted_payments} payments, ` +
+        `${result.deleted_finalizations} finalizations, ` +
+        `${result.deleted_audits} audits.`,
+        'success'
+      );
+      loadFinancialData();
+      loadFinalizations(selectedPeriod);
+    } catch(e) {
+      showMsg('Reset failed: '+(e.response?.data?.detail||e.message), 'error');
+    } finally {
+      setResetting(false);
+    }
+  };
+
   // ── Sort ──────────────────────────────────────────────────────────────────
   const handleSort = (col) => {
     setSortDir(prev => sortCol===col ? (prev==='asc'?'desc':'asc') : 'asc');
@@ -732,6 +763,123 @@ const Financials = () => {
     } catch(e) {
       showMsg('Excel export failed: '+e.message,'error');
     }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER: Reset confirmation modal
+  // ─────────────────────────────────────────────────────────────────────────
+  const renderResetModal = () => {
+    if(!showResetModal) return null;
+    const periodName = periods.find(p=>p.id===selectedPeriod)?.name || '';
+    const stageName  = stages.find(s=>s.id===selectedStage)?.code  || '';
+    const payCount   = financialData?.teacher_payments?.length || 0;
+    const finCount   = finalizationsMap
+      ? Object.values(finalizationsMap).reduce((s,arr)=>s+arr.length, 0)
+      : 0;
+
+    return (
+      <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+          {/* Header */}
+          <div className="flex items-center gap-3 px-6 py-4 border-b bg-red-50 rounded-t-xl">
+            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-5 h-5 text-red-600"/>
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-red-900">Reset Stage Data</h2>
+              <p className="text-sm text-red-600">This action cannot be undone</p>
+            </div>
+          </div>
+
+          {/* Body */}
+          <div className="px-6 py-5 space-y-4">
+            <p className="text-sm text-gray-700">
+              You are about to permanently delete all calculated data for:
+            </p>
+            <div className="bg-gray-50 border rounded-lg px-4 py-3 space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Period</span>
+                <span className="font-semibold text-gray-900">{periodName}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Stage</span>
+                <span className="font-semibold text-gray-900">{stageName}</span>
+              </div>
+            </div>
+
+            {/* What will be deleted */}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                What will be deleted:
+              </p>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 text-sm text-red-700">
+                  <XCircle className="w-4 h-4 flex-shrink-0"/>
+                  <span>
+                    <strong>{payCount}</strong> teacher payment records
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-red-700">
+                  <XCircle className="w-4 h-4 flex-shrink-0"/>
+                  <span>
+                    <strong>{finCount}</strong> finalization records
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-red-700">
+                  <XCircle className="w-4 h-4 flex-shrink-0"/>
+                  <span>
+                    <strong>{auditHistory.length}</strong> audit trail runs
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Warning about carry-forward */}
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5"/>
+              <p className="text-xs text-amber-800">
+                If any carry-forward amounts from this stage were applied to a future
+                period, those future period calculations may also be affected.
+              </p>
+            </div>
+
+            {/* Confirm checkbox */}
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                id="reset-confirm"
+                className="w-4 h-4 accent-red-600"
+                onChange={e => {
+                  document.getElementById('reset-confirm-btn').disabled = !e.target.checked;
+                }}
+              />
+              <span className="text-sm text-gray-700">
+                I understand this will permanently delete all data for this stage
+              </span>
+            </label>
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t bg-gray-50 rounded-b-xl flex items-center justify-between gap-3">
+            <Button
+              variant="outline"
+              onClick={()=>setShowResetModal(false)}
+              disabled={resetting}>
+              Cancel
+            </Button>
+            <Button
+              id="reset-confirm-btn"
+              disabled={true}
+              onClick={handleResetStage}
+              className="bg-red-600 hover:bg-red-700 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
+              {resetting
+                ? 'Resetting…'
+                : `Reset ${stageName} — ${periodName}`}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -2158,6 +2306,14 @@ const renderCalculateBar = () => {
                 <FileText className="w-4 h-4 mr-1"/>Build Report
               </Button>
               {hasPayments && (
+                <Button
+                  variant="outline"
+                  onClick={()=>setShowResetModal(true)}
+                  className="border-red-300 text-red-600 hover:bg-red-50">
+                  <RefreshCw className="w-4 h-4 mr-1"/>Reset Stage
+                </Button>
+              )}
+              {hasPayments && (
                 <Button variant="outline"
                   onClick={async ()=>{
                     setShowAuditPanel(true);
@@ -3112,7 +3268,7 @@ const renderFinalizationModal = () => {
       {renderFinalizationModal()}
       {renderReportModal()}
       {renderAuditPanel()}
-
+      {renderResetModal()}
       <div className="max-w-7xl mx-auto space-y-5">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
