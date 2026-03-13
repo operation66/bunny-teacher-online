@@ -1791,6 +1791,13 @@ const renderAuditBanner = () => {
       paymentsBySection[sec.id] = teacher_payments.filter(p=>p.section_id===sec.id);
     });
 
+    // For teacher view: group ALL payments across ALL sections by teacher
+    const allFilteredPayments = subjectFilter==='all'
+      ? teacher_payments
+      : teacher_payments.filter(p=>p.subject_name===subjectFilter);
+
+    const allTeacherGroups = groupPaymentsByTeacher(allFilteredPayments);
+
     return (
       <div className="space-y-4">
         {/* Subject filter + view mode toggle bar */}
@@ -1806,7 +1813,6 @@ const renderAuditBanner = () => {
                 {allSubjects.map(s=><option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-            {/* View mode toggle */}
             <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
               <button
                 onClick={()=>setViewMode('library')}
@@ -1824,7 +1830,199 @@ const renderAuditBanner = () => {
           </div>
         )}
 
-        {sections.map(section=>{
+        {/* ── TEACHER VIEW: unified across all sections ── */}
+        {viewMode==='teacher' && teacher_payments.length>0 && (
+          <div className="space-y-3">
+            {allTeacherGroups.map(teacher => {
+              const key = teacher.teacher_profile_id || teacher.teacher_name;
+              const isExpanded = expandedTeachers.has(key);
+
+              // Group this teacher's payments by section
+              const sectionGroups = {};
+              teacher.payments.forEach(p => {
+                const secKey = p.section_id;
+                if(!sectionGroups[secKey]) sectionGroups[secKey] = {
+                  section_name: p.section_name,
+                  section_id: p.section_id,
+                  payments: [],
+                  total_payment: 0,
+                  total_watch: 0,
+                };
+                sectionGroups[secKey].payments.push(p);
+                sectionGroups[secKey].total_payment += p.final_payment;
+                sectionGroups[secKey].total_watch += (p.total_watch_time_seconds||0);
+              });
+
+              const fins = teacher.teacher_profile_id
+                ? (finalizationsMap[String(teacher.teacher_profile_id)] || [])
+                : [];
+              const totalTransfer = fins.reduce((s,f)=>s+(f.transfer_amount||0),0);
+              const totalCarry    = fins.reduce((s,f)=>s+(f.carry_forward_out||0),0);
+
+              return (
+                <div key={key} className="border rounded-xl overflow-hidden shadow-sm">
+                  {/* Teacher header */}
+                  <div
+                    className="flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 cursor-pointer border-b"
+                    onClick={()=>setExpandedTeachers(prev=>{
+                      const s=new Set(prev);
+                      s.has(key)?s.delete(key):s.add(key);
+                      return s;
+                    })}>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <Users className="w-4 h-4 text-blue-600"/>
+                      </div>
+                      <div>
+                        <div className="font-semibold text-gray-900">{teacher.teacher_name}</div>
+                        {teacher.teacher_code && (
+                          <div className="text-xs text-gray-500 font-mono">{teacher.teacher_code}</div>
+                        )}
+                      </div>
+                      {/* Section chips */}
+                      <div className="flex gap-1.5 ml-2 flex-wrap">
+                        {Object.values(sectionGroups).map(sec=>(
+                          <span key={sec.section_id}
+                            className={`text-xs font-semibold px-2 py-0.5 rounded-full
+                              ${(sec.section_name||'').toUpperCase().includes('GEN')
+                                ?'bg-green-100 text-green-700'
+                                :'bg-blue-100 text-blue-700'}`}>
+                            {sec.section_name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-5 text-sm">
+                      <div className="text-right">
+                        <div className="text-gray-400 text-xs">Watch</div>
+                        <div className="font-mono font-semibold text-blue-700">
+                          {fmtMinutes(teacher.total_watch_time_seconds)} min
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-gray-400 text-xs">Payment</div>
+                        <div className="font-bold text-green-700">
+                          {fmtCurrency(teacher.total_final_payment)} EGP
+                        </div>
+                      </div>
+                      {fins.length > 0 && (
+                        <div className="text-right border-l border-gray-200 pl-4">
+                          <span className="text-xs font-semibold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full block mb-0.5">
+                            Finalized
+                          </span>
+                          <div className="text-xs text-green-700 font-mono">{fmtCurrency(totalTransfer)} transferred</div>
+                          {totalCarry > 0.01 && (
+                            <div className="text-xs text-orange-600 font-mono">{fmtCurrency(totalCarry)} carry fwd</div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1 text-xs text-gray-400">
+                        {teacher.payments.length} lib{teacher.payments.length!==1?'s':''}
+                        {isExpanded?<ChevronUp className="w-3.5 h-3.5"/>:<ChevronDown className="w-3.5 h-3.5"/>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded: libraries grouped by section */}
+                  {isExpanded && (
+                    <div className="bg-gray-50 divide-y">
+                      {Object.values(sectionGroups).map(sec=>(
+                        <div key={sec.section_id} className="px-4 py-3">
+                          {/* Section sub-header */}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded
+                              ${(sec.section_name||'').toUpperCase().includes('GEN')
+                                ?'bg-green-100 text-green-700'
+                                :'bg-blue-100 text-blue-700'}`}>
+                              {sec.section_name}
+                            </span>
+                            <div className="flex items-center gap-4 text-xs text-gray-500">
+                              <span className="font-mono flex items-center gap-1">
+                                <Clock className="w-3 h-3"/>{fmtMinutes(sec.total_watch)} min
+                              </span>
+                              <span className="font-bold text-green-700">{fmtCurrency(sec.total_payment)} EGP</span>
+                            </div>
+                          </div>
+                          {/* Libraries table */}
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-gray-400 border-b">
+                                <th className="text-left pb-1 font-medium">Library</th>
+                                <th className="text-left pb-1 font-medium">Subject</th>
+                                <th className="text-right pb-1 font-medium">Watch</th>
+                                <th className="text-right pb-1 font-medium">Watch %</th>
+                                <th className="text-right pb-1 font-medium">Payment</th>
+                                <th className="text-right pb-1 font-medium">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sec.payments.map(p=>(
+                                <tr key={p.id}
+                                  id={`payment-row-${p.library_id}`}
+                                  className={`border-b border-gray-200 transition-colors
+                                    ${highlightedId===p.library_id?'bg-yellow-100':''}`}>
+                                  <td className="py-1.5">
+                                    <div className="font-medium text-gray-700">{p.library_name}</div>
+                                    <div className="text-gray-400">ID: {p.library_id}</div>
+                                  </td>
+                                  <td className="py-1.5">
+                                    <span className={`px-1.5 py-0.5 rounded font-semibold
+                                      ${p.subject_is_common?'bg-purple-100 text-purple-700':'bg-gray-100 text-gray-600'}`}>
+                                      {p.subject_name}
+                                      {p.subject_is_common&&<span className="ml-1 opacity-60">(common)</span>}
+                                    </span>
+                                  </td>
+                                  <td className="py-1.5 text-right font-mono">{fmtMinutes(p.total_watch_time_seconds)}</td>
+                                  <td className="py-1.5 text-right font-mono">{fmtPct(p.watch_time_percentage)}</td>
+                                  <td className="py-1.5 text-right font-bold text-green-700">{fmtCurrency(p.final_payment)}</td>
+                                  <td className="py-1.5 text-right">
+                                    {(()=>{
+                                      const fin = fins.find(f=>
+                                        String(f.stage_id)===String(p.stage_id)&&
+                                        String(f.section_id)===String(p.section_id)
+                                      );
+                                      if(!fin) return <span className="text-gray-300">—</span>;
+                                      return (
+                                        <div>
+                                          <div className="text-xs font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full text-center">Finalized</div>
+                                          <div className="text-xs text-green-700 font-mono text-right">{fmtCurrency(fin.transfer_amount)}</div>
+                                          {fin.carry_forward_out>0.01&&(
+                                            <div className="text-xs text-orange-500 font-mono text-right">+{fmtCurrency(fin.carry_forward_out)} fwd</div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Grand total */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-100 border rounded-lg font-bold text-sm">
+              <span className="text-gray-700">All Teachers Total</span>
+              <div className="flex items-center gap-6">
+                <span className="font-mono text-blue-700 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5"/>
+                  {fmtMinutes(allFilteredPayments.reduce((s,p)=>s+(p.total_watch_time_seconds||0),0))} min
+                </span>
+                <span className="text-green-700">
+                  {fmtCurrency(allFilteredPayments.reduce((s,p)=>s+p.final_payment,0))} EGP
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── LIBRARY VIEW: per-section cards ── */}
+        {viewMode==='library' && sections.map(section=>{
           const secPayments   = paymentsBySection[section.id]||[];
           const isExpanded    = expandedSections.has(section.id);
           const revCollapsed  = revenueCollapsed[section.id];
@@ -1873,14 +2071,12 @@ const renderAuditBanner = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-400">{secPayments.length} teachers</span>
-                  {isExpanded ? <ChevronUp className="w-4 h-4 text-gray-400"/>
-                              : <ChevronDown className="w-4 h-4 text-gray-400"/>}
+                  {isExpanded?<ChevronUp className="w-4 h-4 text-gray-400"/>:<ChevronDown className="w-4 h-4 text-gray-400"/>}
                 </div>
               </div>
 
               {isExpanded && (
                 <CardContent className="pt-0 space-y-4">
-                  {/* Revenue block */}
                   <div className="border rounded-lg overflow-hidden">
                     <div
                       className="flex items-center justify-between px-4 py-3 bg-yellow-50 cursor-pointer"
@@ -1888,8 +2084,7 @@ const renderAuditBanner = () => {
                       <span className="text-sm font-semibold text-yellow-800 flex items-center gap-2">
                         <DollarSign className="w-4 h-4"/>Section Revenue
                       </span>
-                      {revCollapsed ? <ChevronDown className="w-4 h-4 text-yellow-600"/>
-                                    : <ChevronUp className="w-4 h-4 text-yellow-600"/>}
+                      {revCollapsed?<ChevronDown className="w-4 h-4 text-yellow-600"/>:<ChevronUp className="w-4 h-4 text-yellow-600"/>}
                     </div>
                     {!revCollapsed && (
                       <div className="p-4 bg-yellow-50 border-t border-yellow-200">
@@ -1916,20 +2111,7 @@ const renderAuditBanner = () => {
                       </div>
                     )}
                   </div>
-
-                  {/* Payments: library or teacher view */}
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                      {viewMode==='teacher'
-                        ? <><Users className="w-4 h-4 text-blue-500"/>Teachers by Profile</>
-                        : <><Users className="w-4 h-4 text-blue-500"/>Teachers ({secPayments.length})</>
-                      }
-                    </h3>
-                    {viewMode==='teacher'
-                      ? renderTeacherView(secPayments)
-                      : renderPaymentsTable(secPayments)
-                    }
-                  </div>
+                  {renderPaymentsTable(secPayments)}
                 </CardContent>
               )}
             </Card>
@@ -1975,11 +2157,10 @@ const renderCalculateBar = () => {
                 className="border-gray-400 text-gray-700 hover:bg-gray-100">
                 <FileText className="w-4 h-4 mr-1"/>Build Report
               </Button>
-              {(lastAudit || auditHistory.length > 0) && (
+              {hasPayments && (
                 <Button variant="outline"
                   onClick={async ()=>{
                     setShowAuditPanel(true);
-                    // If history not loaded yet, load it first then open detail
                     if(auditHistory.length === 0) {
                       await loadAuditHistory(selectedPeriod, selectedStage);
                     }
