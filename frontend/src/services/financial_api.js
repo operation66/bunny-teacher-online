@@ -206,6 +206,12 @@ getTeacherPayments: async (periodId) => {
     return response.data;
   },
 
+  // Reset
+  resetPeriodStage: async (periodId, stageId) => {
+    const response = await api.delete(`/reset-period/${periodId}/${stageId}`);
+    return response.data;
+  },
+
   // Dashboard
   getDashboardSummary: async (periodId = null) => {
     const params = periodId ? { period_id: periodId } : {};
