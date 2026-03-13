@@ -3010,6 +3010,17 @@ async def calculate_payments(
 
         period_months = period.months or []
 
+        # Block recalculation if this stage has already been finalized
+        existing_fins = db.query(PaymentFinalization).filter(
+            PaymentFinalization.period_id == period_id,
+            PaymentFinalization.stage_id  == stage_id,
+        ).first()
+        if existing_fins:
+            raise HTTPException(
+                status_code=409,
+                detail="This stage has already been finalized. Use 'Reset Stage' to unlock recalculation."
+            )
+
         section_revenues = db.query(SectionRevenue).filter(
             SectionRevenue.period_id == period_id,
             SectionRevenue.stage_id  == stage_id,
@@ -3393,6 +3404,76 @@ async def calculate_payments(
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
         
+@app.delete("/reset-period/{period_id}/{stage_id}")
+def reset_period_stage(
+    period_id: int,
+    stage_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Deletes all payments, finalizations, and audits for a given period+stage.
+    This unlocks recalculation after a period has been finalized.
+    """
+    try:
+        # Count what will be deleted for the response summary
+        payment_count = db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == period_id,
+            TeacherPayment.stage_id  == stage_id,
+        ).count()
+
+        # Finalizations are per period (not per stage), but we only delete
+        # rows that belong to sections in this stage
+        stage_section_ids = [
+            s.id for s in db.query(Section).filter(Section.stage_id == stage_id).all()
+        ]
+        fin_count = db.query(PaymentFinalization).filter(
+            PaymentFinalization.period_id   == period_id,
+            PaymentFinalization.stage_id    == stage_id,
+        ).count()
+
+        audit_count = db.query(CalculationAudit).filter(
+            CalculationAudit.period_id == period_id,
+            CalculationAudit.stage_id  == stage_id,
+        ).count()
+
+        # Delete in correct order (audits and payments first, then finalizations)
+        db.query(CalculationAudit).filter(
+            CalculationAudit.period_id == period_id,
+            CalculationAudit.stage_id  == stage_id,
+        ).delete()
+
+        db.query(TeacherPayment).filter(
+            TeacherPayment.period_id == period_id,
+            TeacherPayment.stage_id  == stage_id,
+        ).delete()
+
+        db.query(PaymentFinalization).filter(
+            PaymentFinalization.period_id == period_id,
+            PaymentFinalization.stage_id  == stage_id,
+        ).delete()
+
+        db.commit()
+
+        logger.info(
+            f"Period reset: period={period_id}, stage={stage_id} — "
+            f"deleted {payment_count} payments, {fin_count} finalizations, {audit_count} audits"
+        )
+
+        return {
+            "success": True,
+            "message": f"Reset complete",
+            "deleted_payments": payment_count,
+            "deleted_finalizations": fin_count,
+            "deleted_audits": audit_count,
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Reset error: {e}")
+        raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
+
+
 @app.get("/teacher-payments/{period_id}", response_model=List[TeacherPaymentWithDetails])
 def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     payments = db.query(TeacherPayment).filter(TeacherPayment.period_id == period_id).all()
