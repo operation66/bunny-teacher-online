@@ -299,11 +299,13 @@ const Financials = () => {
     if(!periodId) return;
     try {
       const fins = await financialApi.getFinalizations(periodId);
-      // Build a map: teacher_profile_id -> array of finalization records
-      // A teacher can have multiple rows (one per stage+section)
+      // Build a map: String(teacher_profile_id) -> array of finalization records
+      // Coerce to string so numeric vs string IDs always match
       const map = {};
       (fins || []).forEach(fin => {
-        const k = fin.teacher_profile_id;
+        // Support both field names in case backend uses either
+        const k = String(fin.teacher_profile_id ?? fin.profile_id ?? '');
+        if(!k) return;
         if(!map[k]) map[k] = [];
         map[k].push(fin);
       });
@@ -312,6 +314,7 @@ const Financials = () => {
       console.error('Failed to load finalizations', e);
     }
   };
+
 
   // ── Period CRUD ───────────────────────────────────────────────────────────
   const toggleMonth = (monthStr) => {
@@ -1537,13 +1540,16 @@ const renderAuditBanner = () => {
                 </td>
                 <td className={`${tdClass} text-right`}>
                   {(() => {
-                    // Look up finalization for this teacher profile across all their fins
-                    const assignment = financialData?.teacher_assignments?.find(a => a.library_id === payment.library_id);
-                    const profileId = assignment?.teacher_profile_id;
+                    // payment.teacher_profile_id is directly on each TeacherPayment row
+                    const profileId = String(payment.teacher_profile_id ?? '');
                     const fins = profileId ? (finalizationsMap[profileId] || []) : [];
-                    // Find the fin matching this specific stage+section
-                    const fin = fins.find(f => f.stage_id === payment.stage_id && f.section_id === payment.section_id);
+                    // Match by stage_id + section_id (coerce to string for safety)
+                    const fin = fins.find(f =>
+                      String(f.stage_id) === String(payment.stage_id) &&
+                      String(f.section_id) === String(payment.section_id)
+                    );
                     if(!fin) return <span className="text-xs text-gray-400">—</span>;
+                    console.log('[status]', payment.library_id, 'profileId:', profileId, 'fins:', fins, 'fin:', fin);
                     return (
                       <div className="space-y-1">
                         <span className="text-xs font-semibold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
@@ -1658,7 +1664,7 @@ const renderAuditBanner = () => {
                   {/* Finalization summary for this teacher */}
                   {(() => {
                     const fins = teacher.teacher_profile_id
-                      ? (finalizationsMap[teacher.teacher_profile_id] || [])
+                      ? (finalizationsMap[String(teacher.teacher_profile_id)] || [])
                       : [];
                     if(fins.length === 0) return null;
                     const totalTransfer = fins.reduce((s,f) => s + (f.transfer_amount || 0), 0);
@@ -1724,10 +1730,11 @@ const renderAuditBanner = () => {
                           <td className="py-1.5 text-right">
                             {(() => {
                               const fins = teacher.teacher_profile_id
-                                ? (finalizationsMap[teacher.teacher_profile_id] || [])
+                                ? (finalizationsMap[String(teacher.teacher_profile_id)] || [])
                                 : [];
                               const fin = fins.find(f =>
-                                f.stage_id === p.stage_id && f.section_id === p.section_id
+                                String(f.stage_id) === String(p.stage_id) &&
+                                String(f.section_id) === String(p.section_id)
                               );
                               if(!fin) return <span className="text-xs text-gray-300">—</span>;
                               return (
@@ -1968,17 +1975,26 @@ const renderCalculateBar = () => {
                 className="border-gray-400 text-gray-700 hover:bg-gray-100">
                 <FileText className="w-4 h-4 mr-1"/>Build Report
               </Button>
-              {auditHistory.length > 0 && (
+              {(lastAudit || auditHistory.length > 0) && (
                 <Button variant="outline"
-                  onClick={()=>{
+                  onClick={async ()=>{
                     setShowAuditPanel(true);
-                    loadAuditDetail(auditHistory[0].id);
+                    // If history not loaded yet, load it first then open detail
+                    if(auditHistory.length === 0) {
+                      await loadAuditHistory(selectedPeriod, selectedStage);
+                    }
+                    const targetId = auditHistory.length > 0
+                      ? auditHistory[0].id
+                      : lastAudit?.id;
+                    if(targetId) loadAuditDetail(targetId);
                   }}
                   className="border-indigo-400 text-indigo-700 hover:bg-indigo-50">
                   <ShieldCheck className="w-4 h-4 mr-1"/>Audit Trail
-                  <span className="ml-1.5 bg-indigo-100 text-indigo-700 text-xs rounded-full px-1.5 py-0.5">
-                    {auditHistory.length}
-                  </span>
+                  {auditHistory.length > 0 && (
+                    <span className="ml-1.5 bg-indigo-100 text-indigo-700 text-xs rounded-full px-1.5 py-0.5">
+                      {auditHistory.length}
+                    </span>
+                  )}
                 </Button>
               )}
               <Button
