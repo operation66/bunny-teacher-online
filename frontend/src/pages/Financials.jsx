@@ -198,6 +198,7 @@ const Financials = () => {
   const [showResetModal, setShowResetModal]     = useState(false);
   const [resetting, setResetting]               = useState(false);
   const [resetSummary, setResetSummary]         = useState(null);
+  const [resetConfirmed, setResetConfirmed]     = useState(false);
 
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -847,11 +848,9 @@ const Financials = () => {
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                id="reset-confirm"
                 className="w-4 h-4 accent-red-600"
-                onChange={e => {
-                  document.getElementById('reset-confirm-btn').disabled = !e.target.checked;
-                }}
+                checked={resetConfirmed}
+                onChange={e => setResetConfirmed(e.target.checked)}
               />
               <span className="text-sm text-gray-700">
                 I understand this will permanently delete all data for this stage
@@ -863,13 +862,12 @@ const Financials = () => {
           <div className="px-6 py-4 border-t bg-gray-50 rounded-b-xl flex items-center justify-between gap-3">
             <Button
               variant="outline"
-              onClick={()=>setShowResetModal(false)}
+              onClick={()=>{ setShowResetModal(false); setResetConfirmed(false); }}
               disabled={resetting}>
               Cancel
             </Button>
             <Button
-              id="reset-confirm-btn"
-              disabled={true}
+              disabled={!resetConfirmed || resetting}
               onClick={handleResetStage}
               className="bg-red-600 hover:bg-red-700 text-white font-semibold disabled:opacity-40 disabled:cursor-not-allowed">
               {resetting
@@ -2308,7 +2306,7 @@ const renderCalculateBar = () => {
               {hasPayments && (
                 <Button
                   variant="outline"
-                  onClick={()=>setShowResetModal(true)}
+                  onClick={()=>{ setResetConfirmed(false); setShowResetModal(true); }}
                   className="border-red-300 text-red-600 hover:bg-red-50">
                   <RefreshCw className="w-4 h-4 mr-1"/>Reset Stage
                 </Button>
