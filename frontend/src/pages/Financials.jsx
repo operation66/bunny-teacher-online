@@ -513,42 +513,42 @@ const Financials = () => {
   };
 
   const handleSubmitFinalization = async () => {
-    if(!finalizationPreview) return;
-    setSubmittingFinalization(true);
-    try {
-      // Group rows by teacher to get the merged transfer %
-      const byTeacher = {};
-      (finalizationPreview.rows || []).forEach(row => {
-        const k = String(row.teacher_profile_id);
-        if (!byTeacher[k]) byTeacher[k] = [];
-        byTeacher[k].push(row);
-      });
+  if (!finalizationPreview) return;
+  setSubmittingFinalization(true);
+  try {
+    const rows = (finalizationPreview.rows || []).map(row => {
+      // Use the merged key: one transfer % per teacher across all their rows
+      const mergedKey = `merged-${row.teacher_profile_id}`;
+      const pctStr = finalizationInputs[mergedKey] ?? '100';
+      const pct = Math.min(100, Math.max(0, parseFloat(pctStr) || 0)) / 100;
+      return {
+        teacher_profile_id: row.teacher_profile_id,
+        stage_id:           row.stage_id,
+        section_id:         row.section_id,
+        transfer_percentage: pct,
+        notes: null,
+      };
+    });
+ 
+    await financialApi.submitFinalization({
+      period_id: selectedPeriod,
+      // Guard: only send audit_id if we actually have one (backend now accepts null)
+      audit_id: lastAudit?.id ?? null,
+      rows,
+    });
+ 
+    showMsg('Finalization saved successfully!');
+    setShowFinalizationModal(false);
+  } catch (e) {
+    showMsg(
+      'Error submitting finalization: ' + (e.response?.data?.detail || e.message),
+      'error'
+    );
+  } finally {
+    setSubmittingFinalization(false);
+  }
+};
 
-      const rows = (finalizationPreview.rows || []).map(row => {
-        // Use merged key for this teacher
-        const mergedKey = `merged-${row.teacher_profile_id}`;
-        const pctStr = finalizationInputs[mergedKey] ?? '100';
-        const pct = Math.min(100, Math.max(0, parseFloat(pctStr) || 0)) / 100;
-        return {
-          teacher_profile_id: row.teacher_profile_id,
-          stage_id: row.stage_id,
-          section_id: row.section_id,
-          transfer_percentage: pct,
-          notes: null,
-        };
-      });
-
-      await financialApi.submitFinalization({
-        period_id: selectedPeriod,
-        audit_id: lastAudit?.id || null,
-        rows,
-      });
-      showMsg('Finalization saved successfully!');
-      setShowFinalizationModal(false);
-    } catch(e) {
-      showMsg('Error submitting finalization: '+(e.response?.data?.detail||e.message),'error');
-    } finally { setSubmittingFinalization(false); }
-  };
   // ── Sort ──────────────────────────────────────────────────────────────────
   const handleSort = (col) => {
     setSortDir(prev => sortCol===col ? (prev==='asc'?'desc':'asc') : 'asc');
