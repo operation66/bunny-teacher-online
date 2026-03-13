@@ -2832,6 +2832,7 @@ def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_
         assignments_raw = db.query(TeacherAssignment).filter(
             TeacherAssignment.stage_id == stage_id
         ).all()
+        assignment_map = {a.id: a for a in assignments_raw}
         subject_cache = {}
         def get_subject(subject_id):
             if subject_id not in subject_cache:
