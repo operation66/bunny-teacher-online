@@ -171,6 +171,7 @@ class TeacherPayment(BaseModel):
     stage_id: int
     section_id: int
     subject_id: int
+    teacher_profile_id: Optional[int] = None
     total_watch_time_seconds: int
     watch_time_percentage: float
     # NEW: per-month breakdown for hover tooltip
