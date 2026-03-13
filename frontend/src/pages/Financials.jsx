@@ -194,6 +194,8 @@ const Financials = () => {
   const [reportData, setReportData]             = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [teacherProfiles, setTeacherProfiles]   = useState([]);
+  const [finalizationsMap, setFinalizationsMap] = useState({}); // key: teacher_profile_id, value: finalization record
+
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   const showMsg = (text, type='success') => {
@@ -215,6 +217,7 @@ const Financials = () => {
       loadFinancialData();
       loadLatestAudit();
       loadAuditHistory(selectedPeriod, selectedStage);
+      loadFinalizations(selectedPeriod);
       try {
         const saved = localStorage.getItem(EXCLUDED_KEY(selectedPeriod, selectedStage));
         setExcludedLibs(saved ? new Set(JSON.parse(saved)) : new Set());
@@ -277,6 +280,7 @@ const Financials = () => {
       console.error('Failed to load audit history', e);
     }
   };
+  
   const loadLatestAudit = async () => {
     if(!selectedPeriod || !selectedStage) return;
     try {
@@ -289,6 +293,24 @@ const Financials = () => {
         setAuditAcknowledged(false);
       }
     } catch { setLastAudit(null); }
+  };
+ 
+  const loadFinalizations = async (periodId) => {
+    if(!periodId) return;
+    try {
+      const fins = await financialApi.getFinalizations(periodId);
+      // Build a map: teacher_profile_id -> array of finalization records
+      // A teacher can have multiple rows (one per stage+section)
+      const map = {};
+      (fins || []).forEach(fin => {
+        const k = fin.teacher_profile_id;
+        if(!map[k]) map[k] = [];
+        map[k].push(fin);
+      });
+      setFinalizationsMap(map);
+    } catch(e) {
+      console.error('Failed to load finalizations', e);
+    }
   };
 
   // ── Period CRUD ───────────────────────────────────────────────────────────
@@ -539,6 +561,7 @@ const Financials = () => {
  
     showMsg('Finalization saved successfully!');
     setShowFinalizationModal(false);
+    loadFinalizations(selectedPeriod);
   } catch (e) {
     showMsg(
       'Error submitting finalization: ' + (e.response?.data?.detail || e.message),
@@ -925,7 +948,7 @@ const renderAuditBanner = () => {
 
     return (
       <div className={`border rounded-lg ${bgColor} overflow-hidden`}>
-        {/* Banner header */}
+{/* Banner header */}
         <div
           className="flex items-center justify-between px-4 py-3 cursor-pointer"
           onClick={()=>setAuditExpanded(!auditExpanded)}>
@@ -948,13 +971,15 @@ const renderAuditBanner = () => {
                   }
                 </span>
               )}
+              {/* Always show audit run ID for traceability */}
+              <span className="text-xs text-gray-400 ml-2 font-mono">Run #{lastAudit.id}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {lastAudit.acknowledged && (
               <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded">Acknowledged</span>
             )}
-            {/* View Audit Trail button */}
+            {/* View Audit Trail button — always visible regardless of status */}
             <button
               onClick={e => {
                 e.stopPropagation();
@@ -965,7 +990,10 @@ const renderAuditBanner = () => {
               className="text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
               <FileText className="w-3.5 h-3.5"/>View Audit Trail
             </button>
-            {auditExpanded ? <ChevronUp className="w-4 h-4 text-gray-500"/> : <ChevronDown className="w-4 h-4 text-gray-500"/>}
+            {warnings.length > 0
+              ? (auditExpanded ? <ChevronUp className="w-4 h-4 text-gray-500"/> : <ChevronDown className="w-4 h-4 text-gray-500"/>)
+              : null
+            }
           </div>
         </div>
 
@@ -1467,6 +1495,7 @@ const renderAuditBanner = () => {
               <th className={`${thClass} text-right`} onClick={()=>handleSort('final_payment')}>
                 Payment (EGP) <SortIcon col="final_payment" sortCol={sortCol} sortDir={sortDir}/>
               </th>
+              <th className={`${thClass} text-right`}>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -1506,6 +1535,35 @@ const renderAuditBanner = () => {
                   {payment.tax_amount>0 &&
                     <div className="text-xs text-gray-400">-{fmtCurrency(payment.tax_amount)} tax</div>}
                 </td>
+                <td className={`${tdClass} text-right`}>
+                  {(() => {
+                    // Look up finalization for this teacher profile across all their fins
+                    const assignment = financialData?.teacher_assignments?.find(a => a.library_id === payment.library_id);
+                    const profileId = assignment?.teacher_profile_id;
+                    const fins = profileId ? (finalizationsMap[profileId] || []) : [];
+                    // Find the fin matching this specific stage+section
+                    const fin = fins.find(f => f.stage_id === payment.stage_id && f.section_id === payment.section_id);
+                    if(!fin) return <span className="text-xs text-gray-400">—</span>;
+                    return (
+                      <div className="space-y-1">
+                        <span className="text-xs font-semibold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                          Finalized
+                        </span>
+                        <div className="text-xs text-green-700 font-mono">
+                          {fmtCurrency(fin.transfer_amount)} transferred
+                        </div>
+                        {fin.carry_forward_out > 0.01 && (
+                          <div className="text-xs text-orange-600 font-mono">
+                            {fmtCurrency(fin.carry_forward_out)} carry fwd
+                          </div>
+                        )}
+                        <div className="text-xs text-gray-400">
+                          {Math.round((fin.transfer_percentage || 0) * 100)}%
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </td>
               </tr>
             ))}
             <tr className="border-t-2 border-gray-300 bg-gray-100 font-bold">
@@ -1523,6 +1581,7 @@ const renderAuditBanner = () => {
                   Before tax: {fmtCurrency(totalBeforeTax)}
                 </div>
               </td>
+              <td className="px-3 py-2"/>
             </tr>
           </tbody>
         </table>
@@ -1596,6 +1655,32 @@ const renderAuditBanner = () => {
                       {fmtCurrency(teacher.total_final_payment)} EGP
                     </div>
                   </div>
+                  {/* Finalization summary for this teacher */}
+                  {(() => {
+                    const fins = teacher.teacher_profile_id
+                      ? (finalizationsMap[teacher.teacher_profile_id] || [])
+                      : [];
+                    if(fins.length === 0) return null;
+                    const totalTransfer = fins.reduce((s,f) => s + (f.transfer_amount || 0), 0);
+                    const totalCarry    = fins.reduce((s,f) => s + (f.carry_forward_out || 0), 0);
+                    return (
+                      <div className="text-right border-l border-gray-200 pl-4">
+                        <div className="flex items-center gap-1 justify-end">
+                          <span className="text-xs font-semibold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+                            Finalized
+                          </span>
+                        </div>
+                        <div className="text-xs text-green-700 font-mono mt-0.5">
+                          {fmtCurrency(totalTransfer)} transferred
+                        </div>
+                        {totalCarry > 0.01 && (
+                          <div className="text-xs text-orange-600 font-mono">
+                            {fmtCurrency(totalCarry)} carry fwd
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div className="flex items-center gap-1 text-xs text-gray-400">
                     {teacher.payments.length} lib{teacher.payments.length!==1?'s':''}
                     {isExpanded ? <ChevronUp className="w-3.5 h-3.5"/> : <ChevronDown className="w-3.5 h-3.5"/>}
@@ -1614,6 +1699,7 @@ const renderAuditBanner = () => {
                         <th className="text-right pb-1 font-medium">Watch (min)</th>
                         <th className="text-right pb-1 font-medium">Watch %</th>
                         <th className="text-right pb-1 font-medium">Payment (EGP)</th>
+                        <th className="text-right pb-1 font-medium">Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1635,6 +1721,32 @@ const renderAuditBanner = () => {
                           <td className="py-1.5 text-right font-mono">{fmtMinutes(p.total_watch_time_seconds)}</td>
                           <td className="py-1.5 text-right font-mono">{fmtPct(p.watch_time_percentage)}</td>
                           <td className="py-1.5 text-right font-bold text-green-700">{fmtCurrency(p.final_payment)}</td>
+                          <td className="py-1.5 text-right">
+                            {(() => {
+                              const fins = teacher.teacher_profile_id
+                                ? (finalizationsMap[teacher.teacher_profile_id] || [])
+                                : [];
+                              const fin = fins.find(f =>
+                                f.stage_id === p.stage_id && f.section_id === p.section_id
+                              );
+                              if(!fin) return <span className="text-xs text-gray-300">—</span>;
+                              return (
+                                <div className="space-y-0.5">
+                                  <div className="text-xs font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full text-center">
+                                    Finalized
+                                  </div>
+                                  <div className="text-xs text-green-700 font-mono text-right">
+                                    {fmtCurrency(fin.transfer_amount)}
+                                  </div>
+                                  {fin.carry_forward_out > 0.01 && (
+                                    <div className="text-xs text-orange-500 font-mono text-right">
+                                      +{fmtCurrency(fin.carry_forward_out)} fwd
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1856,6 +1968,19 @@ const renderCalculateBar = () => {
                 className="border-gray-400 text-gray-700 hover:bg-gray-100">
                 <FileText className="w-4 h-4 mr-1"/>Build Report
               </Button>
+              {auditHistory.length > 0 && (
+                <Button variant="outline"
+                  onClick={()=>{
+                    setShowAuditPanel(true);
+                    loadAuditDetail(auditHistory[0].id);
+                  }}
+                  className="border-indigo-400 text-indigo-700 hover:bg-indigo-50">
+                  <ShieldCheck className="w-4 h-4 mr-1"/>Audit Trail
+                  <span className="ml-1.5 bg-indigo-100 text-indigo-700 text-xs rounded-full px-1.5 py-0.5">
+                    {auditHistory.length}
+                  </span>
+                </Button>
+              )}
               <Button
                 onClick={openFinalizationModal}
                 disabled={!canFinalize}
