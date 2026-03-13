@@ -1280,7 +1280,7 @@ def _assignment_with_details_to_dict(obj, stage_name, section_name, subject_name
     }
 
 
-def _payment_with_details_to_dict(obj, stage_name, section_name, subject_name, subject_is_common) -> dict:
+def _payment_with_details_to_dict(obj, stage_name, section_name, subject_name, subject_is_common, teacher_profile_id=None) -> dict:
     return {
         "id":                          obj.id,
         "period_id":                   obj.period_id,
@@ -1290,6 +1290,7 @@ def _payment_with_details_to_dict(obj, stage_name, section_name, subject_name, s
         "stage_id":                    obj.stage_id,
         "section_id":                  obj.section_id,
         "subject_id":                  obj.subject_id,
+        "teacher_profile_id":          teacher_profile_id,
         "total_watch_time_seconds":    obj.total_watch_time_seconds,
         "watch_time_percentage":       obj.watch_time_percentage,
         "monthly_watch_breakdown":     obj.monthly_watch_breakdown or {},
@@ -2857,12 +2858,15 @@ def get_financial_data(period_id: int, stage_id: int, db: Session = Depends(get_
         for p in payments_raw:
             sec = section_map.get(p.section_id) if p.section_id else None
             subj = get_subject(p.subject_id)
+            assignment = assignment_map.get(p.assignment_id)           # ← ADD
+            tp_id = assignment.teacher_profile_id if assignment else None
             payments_dicts.append(_payment_with_details_to_dict(
                 p,
                 stage_name=stage.name,
                 section_name=sec.name if sec else None,
                 subject_name=subj.name if subj else None,
                 subject_is_common=subj.is_common if subj else None,
+                teacher_profile_id=tp_id,
             ))
 
         return FinancialData(
@@ -3356,6 +3360,8 @@ async def calculate_payments(
             db.refresh(payment)
             sec  = section_map.get(payment.section_id)
             subj = get_subject(payment.subject_id)
+            assignment = next((a for a in assignments if a.id == payment.assignment_id), None)
+            tp_id = assignment.teacher_profile_id if assignment else None
             payments_with_details.append(TeacherPaymentWithDetails(
                 **_payment_with_details_to_dict(
                     payment,
@@ -3363,6 +3369,7 @@ async def calculate_payments(
                     section_name=sec.name if sec else None,
                     subject_name=subj.name if subj else None,
                     subject_is_common=subj.is_common if subj else None,
+                    teacher_profile_id=tp_id,
                 )
             ))
 
@@ -3393,7 +3400,9 @@ def get_teacher_payments(period_id: int, db: Session = Depends(get_db), current_
         stage = db.query(Stage).filter(Stage.id == payment.stage_id).first()
         section = db.query(Section).filter(Section.id == payment.section_id).first()
         subject = db.query(Subject).filter(Subject.id == payment.subject_id).first()
-        payment_dict = {**payment.__dict__, "stage_name": stage.name if stage else None,
+        assignment = db.query(TeacherAssignment).filter(TeacherAssignment.id == payment.assignment_id).first()
+        tp_id = assignment.teacher_profile_id if assignment else None
+        payment_dict = {**payment.__dict__, "teacher_profile_id": tp_id, "stage_name": stage.name if stage else None,
                         "section_name": section.name if section else None,
                         "subject_name": subject.name if subject else None,
                         "subject_is_common": subject.is_common if subject else None}
