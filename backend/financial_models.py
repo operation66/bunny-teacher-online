@@ -1,5 +1,6 @@
 # FILE: /backend/financial_models.py
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraintfrom sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraint
+from sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 import pytz
