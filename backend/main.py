@@ -121,7 +121,7 @@ try:
             ))
             logger.info("✅ Added teacher_profile_id column")
 
-result = conn.execute(sql_text(
+        result = conn.execute(sql_text(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name='teacher_assignments' AND column_name='updated_at'"
         )).fetchone()
@@ -132,7 +132,6 @@ result = conn.execute(sql_text(
             ))
             logger.info("✅ Added teacher_assignments.updated_at column")
 
-        # library_exclusions table
         result = conn.execute(sql_text(
             "SELECT table_name FROM information_schema.tables "
             "WHERE table_name='library_exclusions'"
@@ -152,10 +151,9 @@ result = conn.execute(sql_text(
             logger.info("✅ Created library_exclusions table")
 
     logger.info("✅ Financial table migrations complete")
-    
+
 except Exception as e:
     logger.error(f"❌ Migration error (non-fatal): {e}")
-
 # Create FastAPI app
 app = FastAPI(title="Elkheta Teacher Performance Dashboard")
 
