@@ -1,14 +1,26 @@
 # FILE: /backend/financial_models.py
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, JSON
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, ForeignKey, Text, JSON, UniqueConstraintfrom sqlalchemy.orm import relationship
 from database import Base
 from datetime import datetime
 import pytz
 
+from sqlalchemy import UniqueConstraint
+
+class LibraryExclusion(Base):
+    __tablename__ = 'library_exclusions'
+    id         = Column(Integer, primary_key=True, index=True)
+    period_id  = Column(Integer, ForeignKey('financial_periods.id', ondelete='CASCADE'), nullable=False)
+    stage_id   = Column(Integer, ForeignKey('stages.id', ondelete='CASCADE'), nullable=False)
+    library_id = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(pytz.UTC))
+    __table_args__ = (
+        UniqueConstraint('period_id', 'stage_id', 'library_id', name='uq_exclusion'),
+    )
+
+
 class Stage(Base):
     """Educational stages (Junior 4-6, Middle 1-3, Senior 1-3)"""
     __tablename__ = "stages"
-    
     id = Column(Integer, primary_key=True, index=True)
     code = Column(String(10), unique=True, nullable=False)  # S1, M2, J4
     name = Column(String(100), nullable=False)  # Senior 1, Middle 2, Junior 4
