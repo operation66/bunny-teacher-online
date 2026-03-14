@@ -3028,31 +3028,31 @@ async def calculate_payments(
 
         period_months = period.months or []
 
-            # Block recalculation if this stage has already been finalized
-            existing_fins = db.query(PaymentFinalization).filter(
-                PaymentFinalization.period_id == period_id,
-                PaymentFinalization.stage_id  == stage_id,
-            ).first()
-            if existing_fins:
-                raise HTTPException(
-                    status_code=409,
-                    detail="This stage has already been finalized. Use 'Reset Stage' to unlock recalculation."
-                )
-    
-            section_revenues = db.query(SectionRevenue).filter(
-                SectionRevenue.period_id == period_id,
-                SectionRevenue.stage_id  == stage_id,
-            ).all()
-            if not section_revenues:
-                raise HTTPException(status_code=400, detail="No revenue data found. Please add revenue data first.")
-    
-            assignments = db.query(TeacherAssignment).filter(
-                TeacherAssignment.stage_id == stage_id
-            ).all()
-            if excluded_ids:
-                assignments = [a for a in assignments if a.library_id not in excluded_ids]
-            if not assignments:
-                raise HTTPException(status_code=400, detail="No teacher assignments found after exclusions.")
+# Block recalculation if this stage has already been finalized
+        existing_fins = db.query(PaymentFinalization).filter(
+            PaymentFinalization.period_id == period_id,
+            PaymentFinalization.stage_id  == stage_id,
+        ).first()
+        if existing_fins:
+            raise HTTPException(
+                status_code=409,
+                detail="This stage has already been finalized. Use 'Reset Stage' to unlock recalculation."
+            )
+
+        section_revenues = db.query(SectionRevenue).filter(
+            SectionRevenue.period_id == period_id,
+            SectionRevenue.stage_id  == stage_id,
+        ).all()
+        if not section_revenues:
+            raise HTTPException(status_code=400, detail="No revenue data found. Please add revenue data first.")
+
+        assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.stage_id == stage_id
+        ).all()
+        if excluded_ids:
+            assignments = [a for a in assignments if a.library_id not in excluded_ids]
+        if not assignments:
+            raise HTTPException(status_code=400, detail="No teacher assignments found after exclusions.")
 
         # Delete old payments for this period+stage
         db.query(TeacherPayment).filter(
