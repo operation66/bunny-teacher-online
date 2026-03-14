@@ -1284,7 +1284,7 @@ def update_subject(subject_id: int, subject: SubjectCreate, db: Session = Depend
         "created_at": db_subject.created_at.isoformat() if db_subject.created_at else None,
         "assignments_updated": assignments_updated,
         "is_common_changed": is_common_changing,
-    }"Subject deleted successfully"}
+    }
 
 
 # ============================================
