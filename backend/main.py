@@ -151,7 +151,8 @@ result = conn.execute(sql_text(
             """))
             logger.info("✅ Created library_exclusions table")
 
-    logger.info("✅ Financial table migrations complete")    
+    logger.info("✅ Financial table migrations complete")
+    
 except Exception as e:
     logger.error(f"❌ Migration error (non-fatal): {e}")
 
