@@ -1200,9 +1200,91 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db), current_user:
     db_subject = db.query(Subject).filter(Subject.id == subject_id).first()
     if not db_subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    dependent_count = db.query(TeacherAssignment).filter(
+        TeacherAssignment.subject_id == subject_id
+    ).count()
+    if dependent_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete subject '{db_subject.name}' — "
+                f"{dependent_count} teacher assignment(s) still reference it. "
+                f"Delete or reassign those assignments first (Settings → Assignments)."
+            )
+        )
     db.delete(db_subject)
     db.commit()
     return {"message": "Subject deleted successfully"}
+
+
+@app.put("/subjects/{subject_id}")
+def update_subject(subject_id: int, subject: SubjectCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    db_subject = db.query(Subject).filter(Subject.id == subject_id).first()
+    if not db_subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.code.upper().strip() != db_subject.code:
+        existing = db.query(Subject).filter(Subject.code == subject.code.upper().strip()).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Subject with code {subject.code} already exists")
+    is_common_changing = db_subject.is_common != subject.is_common
+    old_is_common = db_subject.is_common
+    db_subject.code = subject.code.upper().strip()
+    db_subject.name = subject.name
+    db_subject.is_common = subject.is_common
+    db.flush()
+    assignments_updated = 0
+    if is_common_changing:
+        affected = db.query(TeacherAssignment).filter(
+            TeacherAssignment.subject_id == subject_id
+        ).all()
+        if not old_is_common and subject.is_common:
+            seen_libraries = set()
+            to_delete = []
+            to_create = []
+            for a in affected:
+                if a.library_id not in seen_libraries:
+                    seen_libraries.add(a.library_id)
+                    to_create.append({
+                        "library_id": a.library_id,
+                        "library_name": a.library_name,
+                        "stage_id": a.stage_id,
+                        "tax_rate": a.tax_rate,
+                        "revenue_percentage": a.revenue_percentage,
+                        "teacher_profile_id": a.teacher_profile_id,
+                    })
+                to_delete.append(a.id)
+            db.query(TeacherAssignment).filter(
+                TeacherAssignment.id.in_(to_delete)
+            ).delete(synchronize_session=False)
+            for data in to_create:
+                db.add(TeacherAssignment(
+                    library_id=data["library_id"],
+                    library_name=data["library_name"],
+                    stage_id=data["stage_id"],
+                    section_id=None,
+                    subject_id=subject_id,
+                    tax_rate=data["tax_rate"],
+                    revenue_percentage=data["revenue_percentage"],
+                    teacher_profile_id=data["teacher_profile_id"],
+                ))
+                assignments_updated += 1
+        else:
+            ids_to_delete = [a.id for a in affected]
+            db.query(TeacherAssignment).filter(
+                TeacherAssignment.id.in_(ids_to_delete)
+            ).delete(synchronize_session=False)
+            assignments_updated = len(ids_to_delete)
+    db.commit()
+    db.refresh(db_subject)
+    return {
+        "id": db_subject.id,
+        "code": db_subject.code,
+        "name": db_subject.name,
+        "is_common": db_subject.is_common,
+        "created_at": db_subject.created_at.isoformat() if db_subject.created_at else None,
+        "assignments_updated": assignments_updated,
+        "is_common_changed": is_common_changing,
+    }"Subject deleted successfully"}
 
 
 # ============================================
