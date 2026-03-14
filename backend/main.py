@@ -1848,9 +1848,28 @@ def acknowledge_audit(
     audit.acknowledged = True
     audit.acknowledged_by_user_id = current_user.id
     audit.acknowledged_at = datetime.now(pytz.UTC)
-    db.commit()
-    return {"success": True, "audit_id": audit_id}
 
+    # Append acknowledgement event to warnings log for history
+    existing_warnings = audit.warnings or []
+    existing_warnings.append({
+        "code": "ACKNOWLEDGED",
+        "message": (
+            f"All warnings acknowledged by {current_user.email} "
+            f"on {datetime.now(pytz.UTC).strftime('%Y-%m-%d %H:%M UTC')}."
+        ),
+        "severity": "resolved",
+        "library_id": None,
+        "library_name": None,
+    })
+    audit.warnings = existing_warnings
+
+    db.commit()
+    return {
+        "success": True,
+        "audit_id": audit_id,
+        "acknowledged_by": current_user.email,
+        "acknowledged_at": audit.acknowledged_at.isoformat(),
+    }
 @app.get("/calculation-audits/{audit_id}/detail")
 def get_audit_detail(
     audit_id: int,
@@ -3248,8 +3267,6 @@ async def calculate_payments(
                 })
 
         # Check libraries appearing in multiple assignments
-        # Common subjects are EXPECTED to appear in multiple sections — confirm only
-        # Non-common subjects appearing in multiple sections IS a real problem
         lib_id_counts = {}
         for a in assignments:
             lib_id_counts[a.library_id] = lib_id_counts.get(a.library_id, 0) + 1
@@ -3258,38 +3275,46 @@ async def calculate_payments(
             if count > 1:
                 lib_assignments = [a for a in assignments if a.library_id == lib_id]
                 lib_name = lib_assignments[0].library_name if lib_assignments else str(lib_id)
-                section_ids = [a.section_id for a in lib_assignments]
-                
-                # Check if ALL assignments for this library are common subjects
+
+                # Get unique section IDs for this library
+                unique_sections = list({a.section_id for a in lib_assignments if a.section_id})
+
+                # Check if ANY assignment for this library is a common subject
+                any_common = any(
+                    get_subject(a.subject_id) and get_subject(a.subject_id).is_common
+                    for a in lib_assignments
+                )
                 all_common = all(
                     get_subject(a.subject_id) and get_subject(a.subject_id).is_common
                     for a in lib_assignments
                 )
 
-                if all_common:
-                    # This is expected — common subject assigned across multiple sections
+                if any_common and len(unique_sections) > 1:
+                    # Expected: common subject split across multiple sections
                     section_names = []
-                    for a in lib_assignments:
-                        sec = section_map.get(a.section_id)
+                    for sec_id in unique_sections:
+                        sec = section_map.get(sec_id)
                         if sec:
                             section_names.append(sec.name)
+                    subj = get_subject(lib_assignments[0].subject_id)
                     audit_warnings.append({
                         "code": "COMMON_SUBJECT_MULTI_SECTION",
                         "message": (
-                            f"Library '{lib_name}' is a common subject assigned to "
-                            f"{count} sections ({', '.join(section_names)}) — this is expected."
+                            f"'{lib_name}' is a common subject ({subj.name if subj else 'unknown'}) "
+                            f"correctly assigned across {len(unique_sections)} sections "
+                            f"({', '.join(section_names)}) — watch time will be split by order ratio."
                         ),
                         "severity": "info",
                         "library_id": lib_id,
                         "library_name": lib_name,
                     })
-                else:
-                    # Non-common subject in multiple assignments — this IS a problem
+                elif not any_common:
+                    # Non-common subject appearing in multiple assignments — real problem
                     audit_warnings.append({
                         "code": "DUPLICATE_LIBRARY_ASSIGNMENT",
                         "message": (
                             f"Library '{lib_name}' appears in {count} assignments "
-                            f"but is NOT marked as a common subject. Check assignments."
+                            f"but subject is NOT marked as common. Check assignments in Settings."
                         ),
                         "severity": "critical",
                         "library_id": lib_id,
@@ -3313,53 +3338,67 @@ async def calculate_payments(
                 })
 
         # Warning: unlinked teachers (no teacher_profile_id)
-        # Also check if a profile exists by P-code even if not formally linked
-        all_profiles_by_code = {
-            p.code: p for p in db.query(TeacherProfileModel).all()
-        }
+        import re as _re
+        all_profiles_by_code = {p.code: p for p in db.query(TeacherProfileModel).all()}
+        all_profiles_by_name = {p.name.lower(): p for p in db.query(TeacherProfileModel).all()}
+
         for a in assignments:
             if not a.teacher_profile_id:
-                # Try to find the P-code in the library name
-                import re as _re
-                p_match = _re.search(r'[Pp](\d{4})', a.library_name or '')
+                lib_name = a.library_name or ''
+                p_match = _re.search(r'[Pp](\d{4})', lib_name)
+
                 if p_match:
                     p_code = f"P{p_match.group(1)}"
                     if p_code in all_profiles_by_code:
-                        # Profile exists but assignment not formally linked — minor warning
                         audit_warnings.append({
                             "code": "UNLINKED_TEACHER",
                             "message": (
-                                f"Library '{a.library_name}' has profile {p_code} in DB "
-                                f"but assignment is not formally linked. Run Auto-Link to fix."
+                                f"Library '{lib_name}' has profile {p_code} in DB "
+                                f"but assignment not formally linked. Run Auto-Link to fix."
                             ),
                             "severity": "warning",
                             "library_id": a.library_id,
-                            "library_name": a.library_name,
+                            "library_name": lib_name,
                         })
                     else:
-                        # P-code not in DB at all
                         audit_warnings.append({
                             "code": "UNLINKED_TEACHER",
                             "message": (
-                                f"Library '{a.library_name}' has P-code {p_code} "
+                                f"Library '{lib_name}' has P-code {p_code} "
                                 f"but no matching profile found. Run Auto-Link in Settings."
                             ),
                             "severity": "warning",
                             "library_id": a.library_id,
-                            "library_name": a.library_name,
+                            "library_name": lib_name,
                         })
                 else:
-                    # No P-code in library name at all
-                    audit_warnings.append({
-                        "code": "UNLINKED_TEACHER",
-                        "message": (
-                            f"Library '{a.library_name}' has no P-code in its name "
-                            f"and no teacher profile linked."
-                        ),
-                        "severity": "warning",
-                        "library_id": a.library_id,
-                        "library_name": a.library_name,
-                    })
+                    # No P-code — try matching by teacher name in library name
+                    name_matched = False
+                    for profile_name, profile in all_profiles_by_name.items():
+                        if profile_name in lib_name.lower():
+                            name_matched = True
+                            audit_warnings.append({
+                                "code": "UNLINKED_TEACHER",
+                                "message": (
+                                    f"Library '{lib_name}' matches profile '{profile.name}' ({profile.code}) "
+                                    f"by name but is not formally linked. Run Auto-Link to fix."
+                                ),
+                                "severity": "warning",
+                                "library_id": a.library_id,
+                                "library_name": lib_name,
+                            })
+                            break
+                    if not name_matched:
+                        audit_warnings.append({
+                            "code": "UNLINKED_TEACHER",
+                            "message": (
+                                f"Library '{lib_name}' has no P-code and no matching "
+                                f"teacher profile found. Add profile manually in Settings."
+                            ),
+                            "severity": "warning",
+                            "library_id": a.library_id,
+                            "library_name": lib_name,
+                        })
 
         # Cross-validation: re-derive final payments from inputs and compare
         verification_status = "matched"
