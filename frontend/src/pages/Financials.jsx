@@ -14,8 +14,7 @@ import {
 } from 'lucide-react';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-const EXCLUDED_KEY = (periodId, stageId) => `financials_excluded_${periodId}_${stageId}`;
-
+// EXCLUDED_KEY removed — exclusions now stored in DB via /library-exclusions endpoint
 const MONTHS = [
   { value: '01', label: 'January' }, { value: '02', label: 'February' },
   { value: '03', label: 'March' },   { value: '04', label: 'April' },
@@ -222,10 +221,7 @@ const Financials = () => {
       loadLatestAudit();
       loadAuditHistory(selectedPeriod, selectedStage);
       loadFinalizations(selectedPeriod);
-      try {
-        const saved = localStorage.getItem(EXCLUDED_KEY(selectedPeriod, selectedStage));
-        setExcludedLibs(saved ? new Set(JSON.parse(saved)) : new Set());
-      } catch { setExcludedLibs(new Set()); }
+      loadExclusions(selectedPeriod, selectedStage);
     }
   },[selectedPeriod, selectedStage]);
 
@@ -299,6 +295,15 @@ const Financials = () => {
     } catch { setLastAudit(null); }
   };
  
+  const loadExclusions = async (periodId, stageId) => {
+    try {
+      const ids = await financialApi.getLibraryExclusions(periodId, stageId);
+      setExcludedLibs(new Set(ids));
+    } catch {
+      setExcludedLibs(new Set());
+    }
+  };
+
   const loadFinalizations = async (periodId) => {
     if(!periodId) return;
     try {
@@ -394,35 +399,35 @@ const Financials = () => {
     try {
       const data = await financialApi.getLibrariesPreview(selectedPeriod, selectedStage);
       setLibraryPreview(data);
-      try {
-        const saved = localStorage.getItem(EXCLUDED_KEY(selectedPeriod, selectedStage));
-        if(saved) setExcludedLibs(new Set(JSON.parse(saved)));
-      } catch {}
+      // exclusions already loaded from DB on stage select — no need to reload here
     } catch(e){
       showMsg('Error loading preview: '+(e.response?.data?.detail||e.message),'error');
       setShowLibraryModal(false);
     } finally { setLoadingPreview(false); }
   };
 
-  const persistExcluded = (newSet) => {
+  const persistExcluded = async (newSet) => {
     try {
-      localStorage.setItem(
-        EXCLUDED_KEY(selectedPeriod, selectedStage),
-        JSON.stringify(Array.from(newSet))
+      await financialApi.setLibraryExclusions(
+        selectedPeriod,
+        selectedStage,
+        Array.from(newSet)
       );
-    } catch {}
+    } catch(e) {
+      console.error('Failed to save exclusions:', e);
+    }
   };
 
   const toggleLibraryExclude = (libId) => {
     setExcludedLibs(prev=>{
       const s = new Set(prev);
       s.has(libId) ? s.delete(libId) : s.add(libId);
-      persistExcluded(s);
+      persistExcluded(s); // async but fire-and-forget is fine here
       return s;
     });
   };
 
-  const rejectSelected = () => {
+const rejectSelected = () => {
     setExcludedLibs(prev=>{
       const s = new Set(prev);
       selectedModalLibs.forEach(id => s.add(id));
@@ -441,7 +446,7 @@ const Financials = () => {
     });
     setSelectedModalLibs(new Set());
   };
-
+  
   const toggleModalSelect = (libId) => {
     setSelectedModalLibs(prev=>{
       const s = new Set(prev);
@@ -2512,8 +2517,9 @@ const renderCalculateBar = () => {
                   </div>
                   {excludedLibs.size>0 && (
                     <button onClick={()=>{
-                        setExcludedLibs(new Set());
-                        try{localStorage.removeItem(EXCLUDED_KEY(selectedPeriod,selectedStage));}catch{}
+                        const empty = new Set();
+                        setExcludedLibs(empty);
+                        persistExcluded(empty);
                       }}
                       className="text-xs text-blue-600 underline hover:text-blue-800">
                       Restore all
