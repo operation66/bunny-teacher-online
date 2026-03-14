@@ -169,6 +169,7 @@ const Financials = () => {
   const [showCreatePeriodInline, setShowCreatePeriodInline] = useState(false);
   const [finalizeFilterStage, setFinalizeFilterStage]     = useState('all');
   const [finalizeFilterSubject, setFinalizeFilterSubject] = useState('all');
+  const [sectionFilter, setSectionFilter]                 = useState('all');
   const [collapsedFinalizeTeachers, setCollapsedFinalizeTeachers] = useState(new Set());
   
   // ── NEW: Report builder modal ─────────────────────────────────────────────
@@ -261,12 +262,16 @@ const Financials = () => {
   const loadAuditDetail = async (auditId) => {
     if (!auditId) return;
     setLoadingAuditDetail(true);
-    setAuditDetail(null); // clear stale data while loading
+    setAuditDetail(null);
     try {
       const detail = await financialApi.getAuditDetail(auditId);
+      console.log('[AuditDetail] loaded:', detail);
+      if (!detail || !detail.id) {
+        console.warn('[AuditDetail] empty or invalid response', detail);
+      }
       setAuditDetail(detail);
     } catch(e) {
-      console.error('Failed to load audit detail', e);
+      console.error('[AuditDetail] Failed to load audit detail', e);
     } finally {
       setLoadingAuditDetail(false);
     }
@@ -1305,13 +1310,23 @@ const renderAuditBanner = () => {
 
             {loadingAuditDetail ? (
               <div className="p-16 text-center text-gray-400">
-                <div className="text-4xl mb-3">⏳</div>
+                <div className="text-4xl mb-3 animate-spin">⏳</div>
                 Loading audit detail…
               </div>
             ) : !audit ? (
               <div className="p-16 text-center text-gray-400">
                 <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-30"/>
-                No audit data available. Calculate payments first.
+                {auditHistory.length > 0
+                  ? <div>
+                      <p className="mb-2">Click a run above to load its details.</p>
+                      <button
+                        onClick={() => loadAuditDetail(auditHistory[0].id)}
+                        className="text-sm text-blue-600 underline hover:text-blue-800">
+                        Load Run #{auditHistory[0].id}
+                      </button>
+                    </div>
+                  : <p>No audit data available. Calculate payments first.</p>
+                }
               </div>
             ) : (
               <div className="px-6 py-5 space-y-6">
@@ -1402,14 +1417,18 @@ const renderAuditBanner = () => {
                             ? 'bg-red-50 border-red-200'
                             : w.severity === 'info'
                               ? 'bg-blue-50 border-blue-200'
-                              : 'bg-yellow-50 border-yellow-200'
+                              : w.severity === 'resolved'
+                                ? 'bg-green-50 border-green-200'
+                                : 'bg-yellow-50 border-yellow-200'
                         }`}>
                           <div className="flex items-start gap-2">
                             {w.severity === 'info'
                               ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500"/>
-                              : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-                                  w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
-                                }`}/>
+                              : w.severity === 'resolved'
+                                ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500"/>
+                                : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                                    w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
+                                  }`}/>
                             }
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
@@ -1425,7 +1444,9 @@ const renderAuditBanner = () => {
                                     ? 'text-red-600'
                                     : w.severity === 'info'
                                       ? 'text-blue-600'
-                                      : 'text-yellow-600'
+                                      : w.severity === 'resolved'
+                                        ? 'text-green-600'
+                                        : 'text-yellow-600'
                                 }`}>{w.severity}</span>
                               </div>
                               <p className={`text-sm ${
@@ -1433,7 +1454,9 @@ const renderAuditBanner = () => {
                                   ? 'text-red-800'
                                   : w.severity === 'info'
                                     ? 'text-blue-800'
-                                    : 'text-yellow-800'
+                                    : w.severity === 'resolved'
+                                      ? 'text-green-800'
+                                      : 'text-yellow-800'
                               }`}>{w.message}</p>
                               {w.library_id && (
                                 <div className="mt-1 text-xs text-gray-500 font-mono">
@@ -1971,9 +1994,11 @@ const renderAuditBanner = () => {
     });
 
     // For teacher view: group ALL payments across ALL sections by teacher
-    const allFilteredPayments = subjectFilter==='all'
-      ? teacher_payments
-      : teacher_payments.filter(p=>p.subject_name===subjectFilter);
+    const allFilteredPayments = teacher_payments.filter(p => {
+      if(subjectFilter !== 'all' && p.subject_name !== subjectFilter) return false;
+      if(sectionFilter !== 'all' && String(p.section_id) !== sectionFilter) return false;
+      return true;
+    });
 
     const allTeacherGroups = groupPaymentsByTeacher(allFilteredPayments);
 
@@ -1982,8 +2007,17 @@ const renderAuditBanner = () => {
         {/* Subject filter + view mode toggle bar */}
         {teacher_payments.length>0 && (
           <div className="flex items-center justify-between gap-3 bg-white border rounded-lg px-4 py-3">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-600">Filter by Subject:</span>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm font-medium text-gray-600">Filter:</span>
+              <select
+                value={sectionFilter}
+                onChange={e=>setSectionFilter(e.target.value)}
+                className="text-sm border rounded px-2 py-1 bg-white">
+                <option value="all">All Sections</option>
+                {financialData?.sections?.map(s=>(
+                  <option key={s.id} value={String(s.id)}>{s.name}</option>
+                ))}
+              </select>
               <select
                 value={subjectFilter}
                 onChange={e=>setSubjectFilter(e.target.value)}
