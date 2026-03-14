@@ -261,6 +261,7 @@ const Financials = () => {
   const loadAuditDetail = async (auditId) => {
     if (!auditId) return;
     setLoadingAuditDetail(true);
+    setAuditDetail(null); // clear stale data while loading
     try {
       const detail = await financialApi.getAuditDetail(auditId);
       setAuditDetail(detail);
@@ -1114,7 +1115,12 @@ const renderAuditBanner = () => {
               )}
               {isWarnings && (
                 <span className="font-semibold text-yellow-800">
-                  {warnings.length} warning{warnings.length!==1?'s':''} — click to review
+                  {warnings.filter(w=>w.severity!=='info').length} warning{warnings.filter(w=>w.severity!=='info').length!==1?'s':''} — click to review
+                  {warnings.filter(w=>w.severity==='info').length > 0 && (
+                    <span className="text-blue-600 ml-2 font-normal text-xs">
+                      + {warnings.filter(w=>w.severity==='info').length} info
+                    </span>
+                  )}
                 </span>
               )}
               {(isFailed || isMismatch) && (
@@ -1135,11 +1141,18 @@ const renderAuditBanner = () => {
             )}
             {/* View Audit Trail button — always visible regardless of status */}
             <button
-              onClick={e => {
+              onClick={async e => {
                 e.stopPropagation();
                 setShowAuditPanel(true);
-                loadAuditDetail(lastAudit.id);
-                loadAuditHistory(selectedPeriod, selectedStage);
+                setAuditDetail(null);
+                const freshHistory = await financialApi.getCalculationAudits(
+                  selectedPeriod, selectedStage
+                ).catch(()=>[]);
+                setAuditHistory(freshHistory || []);
+                const targetId = freshHistory?.length > 0
+                  ? freshHistory[0].id
+                  : lastAudit?.id;
+                if(targetId) loadAuditDetail(targetId);
               }}
               className="text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
               <FileText className="w-3.5 h-3.5"/>View Audit Trail
@@ -1387,25 +1400,40 @@ const renderAuditBanner = () => {
                         <div key={i} className={`rounded-lg border px-4 py-3 ${
                           w.severity === 'critical'
                             ? 'bg-red-50 border-red-200'
-                            : 'bg-yellow-50 border-yellow-200'
+                            : w.severity === 'info'
+                              ? 'bg-blue-50 border-blue-200'
+                              : 'bg-yellow-50 border-yellow-200'
                         }`}>
                           <div className="flex items-start gap-2">
-                            <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-                              w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
-                            }`}/>
+                            {w.severity === 'info'
+                              ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500"/>
+                              : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                                  w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
+                                }`}/>
+                            }
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                                 <code className={`text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
                                   w.severity === 'critical'
                                     ? 'bg-red-100 text-red-700'
-                                    : 'bg-yellow-100 text-yellow-700'
+                                    : w.severity === 'info'
+                                      ? 'bg-blue-100 text-blue-700'
+                                      : 'bg-yellow-100 text-yellow-700'
                                 }`}>{w.code}</code>
                                 <span className={`text-xs font-semibold uppercase ${
-                                  w.severity === 'critical' ? 'text-red-600' : 'text-yellow-600'
+                                  w.severity === 'critical'
+                                    ? 'text-red-600'
+                                    : w.severity === 'info'
+                                      ? 'text-blue-600'
+                                      : 'text-yellow-600'
                                 }`}>{w.severity}</span>
                               </div>
                               <p className={`text-sm ${
-                                w.severity === 'critical' ? 'text-red-800' : 'text-yellow-800'
+                                w.severity === 'critical'
+                                  ? 'text-red-800'
+                                  : w.severity === 'info'
+                                    ? 'text-blue-800'
+                                    : 'text-yellow-800'
                               }`}>{w.message}</p>
                               {w.library_id && (
                                 <div className="mt-1 text-xs text-gray-500 font-mono">
@@ -2320,11 +2348,15 @@ const renderCalculateBar = () => {
                 <Button variant="outline"
                   onClick={async ()=>{
                     setShowAuditPanel(true);
-                    if(auditHistory.length === 0) {
-                      await loadAuditHistory(selectedPeriod, selectedStage);
-                    }
-                    const targetId = auditHistory.length > 0
-                      ? auditHistory[0].id
+                    setAuditDetail(null);
+                    // Always reload history fresh so we have latest runs
+                    const freshHistory = await financialApi.getCalculationAudits(
+                      selectedPeriod, selectedStage
+                    ).catch(()=>[]);
+                    setAuditHistory(freshHistory || []);
+                    // Auto-load the most recent run
+                    const targetId = freshHistory?.length > 0
+                      ? freshHistory[0].id
                       : lastAudit?.id;
                     if(targetId) loadAuditDetail(targetId);
                   }}
