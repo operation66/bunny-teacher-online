@@ -206,6 +206,18 @@ getTeacherPayments: async (periodId) => {
     return response.data;
   },
 
+  // Library exclusions (DB-backed)
+  getLibraryExclusions: async (periodId, stageId) => {
+    const response = await api.get(`/library-exclusions/${periodId}/${stageId}`);
+    return response.data; // returns array of library_ids
+  },
+  setLibraryExclusions: async (periodId, stageId, libraryIds) => {
+    const response = await api.post(`/library-exclusions/${periodId}/${stageId}`, {
+      library_ids: libraryIds,
+    });
+    return response.data;
+  },
+
   // Reset
   resetPeriodStage: async (periodId, stageId) => {
     const response = await api.delete(`/reset-period/${periodId}/${stageId}`);
