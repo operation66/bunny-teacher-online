@@ -25,6 +25,7 @@ from financial_models import (
     Stage, Section, Subject, StageSectionSubject,
     TeacherAssignment, FinancialPeriod, SectionRevenue, TeacherPayment,
     TeacherProfile as TeacherProfileModel, CalculationAudit, PaymentFinalization,
+    LibraryExclusion,
     Base as FinancialBase
 )
 from financial_schemas import (
@@ -120,7 +121,7 @@ try:
             ))
             logger.info("✅ Added teacher_profile_id column")
 
-        result = conn.execute(sql_text(
+result = conn.execute(sql_text(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name='teacher_assignments' AND column_name='updated_at'"
         )).fetchone()
@@ -130,9 +131,27 @@ try:
                 "ALTER TABLE teacher_assignments ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE"
             ))
             logger.info("✅ Added teacher_assignments.updated_at column")
-    
-    logger.info("✅ Financial table migrations complete")
-    
+
+        # library_exclusions table
+        result = conn.execute(sql_text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_name='library_exclusions'"
+        )).fetchone()
+        if not result:
+            logger.info("Creating library_exclusions table...")
+            conn.execute(sql_text("""
+                CREATE TABLE library_exclusions (
+                    id SERIAL PRIMARY KEY,
+                    period_id INTEGER NOT NULL REFERENCES financial_periods(id) ON DELETE CASCADE,
+                    stage_id  INTEGER NOT NULL REFERENCES stages(id) ON DELETE CASCADE,
+                    library_id INTEGER NOT NULL,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    CONSTRAINT uq_exclusion UNIQUE (period_id, stage_id, library_id)
+                )
+            """))
+            logger.info("✅ Created library_exclusions table")
+
+    logger.info("✅ Financial table migrations complete")    
 except Exception as e:
     logger.error(f"❌ Migration error (non-fatal): {e}")
 
@@ -3404,6 +3423,48 @@ async def calculate_payments(
         import traceback; logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="An internal server error occurred. Please try again.")
         
+@app.get("/library-exclusions/{period_id}/{stage_id}")
+def get_library_exclusions(
+    period_id: int,
+    stage_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    rows = db.query(LibraryExclusion).filter(
+        LibraryExclusion.period_id == period_id,
+        LibraryExclusion.stage_id  == stage_id,
+    ).all()
+    return [r.library_id for r in rows]
+
+
+@app.post("/library-exclusions/{period_id}/{stage_id}")
+def set_library_exclusions(
+    period_id: int,
+    stage_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Replace the full exclusion list for this period+stage."""
+    library_ids = payload.get("library_ids", [])
+
+    # Delete existing and re-insert (full replace)
+    db.query(LibraryExclusion).filter(
+        LibraryExclusion.period_id == period_id,
+        LibraryExclusion.stage_id  == stage_id,
+    ).delete()
+
+    for lib_id in library_ids:
+        db.add(LibraryExclusion(
+            period_id=period_id,
+            stage_id=stage_id,
+            library_id=lib_id,
+        ))
+
+    db.commit()
+    return {"saved": len(library_ids)}
+
+
 @app.delete("/reset-period/{period_id}/{stage_id}")
 def reset_period_stage(
     period_id: int,
