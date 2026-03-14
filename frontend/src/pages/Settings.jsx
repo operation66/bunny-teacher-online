@@ -303,6 +303,7 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
 
   const [editingItems, setEditingItems] = useState(() => buildInitial(initialUnmatched));
   const [saving, setSaving] = useState(new Set());
+  const [editingSubject, setEditingSubject] = useState(null);
   const [filterStage, setFilterStage] = useState('');
   const [selectedLibIds, setSelectedLibIds] = useState(new Set());
   const [showBulkSection, setShowBulkSection] = useState(false);
@@ -1392,6 +1393,74 @@ const handleManualLink = async (libraryId) => {
 
   const tabSubjectsJSX = (
     <div className="space-y-6">
+      {editingSubject && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-6 py-4 border-b">
+              <h2 className="text-lg font-bold text-gray-900">Edit Subject</h2>
+              <button onClick={() => setEditingSubject(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5"/>
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Code *</label>
+                <Input value={editingSubject.code}
+                  onChange={e => setEditingSubject(s => ({ ...s, code: e.target.value.toUpperCase() }))}/>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                <Input value={editingSubject.name}
+                  onChange={e => setEditingSubject(s => ({ ...s, name: e.target.value }))}/>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={editingSubject.is_common}
+                  onChange={e => setEditingSubject(s => ({ ...s, is_common: e.target.checked }))}
+                  className="w-4 h-4 rounded text-blue-600"/>
+                <span className="text-sm font-medium text-gray-700">Common (all sections)</span>
+              </label>
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                {editingSubject.is_common !== subjects.find(s => s.id === editingSubject.id)?.is_common ? (
+                  editingSubject.is_common
+                    ? <><strong>Section → Common:</strong> All section-specific assignments will be consolidated into one common assignment per library (section removed).</>
+                    : <><strong>Common → Section:</strong> Common assignments will be deleted. Re-run <strong>Auto-Match</strong> after saving to recreate per-section assignments.</>
+                ) : (
+                  <>Renaming or changing code only — assignments are unaffected.</>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-2xl">
+              <Button
+                onClick={async () => {
+                  const wasCommon = subjects.find(s => s.id === editingSubject.id)?.is_common;
+                  const isChangingType = wasCommon !== editingSubject.is_common;
+                  try {
+                    const result = await financialApi.updateSubject(editingSubject.id, {
+                      code: editingSubject.code,
+                      name: editingSubject.name,
+                      is_common: editingSubject.is_common,
+                    });
+                    setEditingSubject(null);
+                    loadAll();
+                    if (isChangingType) {
+                      if (!wasCommon && editingSubject.is_common) {
+                        flash(`Subject updated — ${result.assignments_updated} assignments consolidated to common.`);
+                      } else {
+                        flash(`Subject updated — ${result.assignments_updated} assignments removed. Re-run Auto-Match to recreate per-section assignments.`);
+                      }
+                    } else {
+                      flash('Subject updated');
+                    }
+                  } catch (err) { flash('Error: ' + errMsg(err), 'error'); }
+                }}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
+                <Save className="w-4 h-4 mr-2"/>Save Changes
+              </Button>
+              <Button variant="outline" onClick={() => setEditingSubject(null)} className="flex-1">Cancel</Button>
+            </div>
+          </div>
+        </div>
+      )}
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Plus className="w-5 h-5"/>Add New Subject</CardTitle></CardHeader>
         <CardContent>
@@ -1433,7 +1502,14 @@ const handleManualLink = async (libraryId) => {
                       <span className={`font-mono font-bold text-${colour}-600`}>{sub.code}</span>
                       <span className="text-sm text-gray-700">{sub.name}</span>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => deleteSubject(sub.id)} className="text-red-500 hover:text-red-700"><Trash2 className="w-4 h-4"/></Button>
+                    <div className="flex items-center gap-1">
+                      <Button variant="outline" size="sm"
+                        onClick={() => setEditingSubject({ id: sub.id, code: sub.code, name: sub.name, is_common: sub.is_common })}
+                        className="hover:bg-blue-50 hover:border-blue-300 h-7 px-2">
+                        <Edit2 className="w-3.5 h-3.5"/>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => deleteSubject(sub.id)} className="text-red-500 hover:text-red-700 h-7 px-2"><Trash2 className="w-4 h-4"/></Button>
+                    </div>
                   </div>
                 ))}
                 {subjects.filter(s => s.is_common === isCommon).length === 0 && <p className="text-sm text-gray-400 italic">None yet</p>}
