@@ -1027,20 +1027,53 @@ const handleManualLink = async (libraryId) => {
   // Section column: compact code badges only — full name shown on hover via title
   const sectionCell = (group) => {
     const secList = group._sections;
+    const subj = subjects.find(s => s.id === group.subject_id);
+    const needsSection = subj && !subj.is_common && secList.every(s => s.id === null);
+
+    // If section_id is null and subject is section-specific → show warning badge
+    if (needsSection) {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 border border-red-300 px-2 py-1 rounded-lg font-semibold">
+          <AlertTriangle className="w-3 h-3"/>Needs Section
+        </span>
+      );
+    }
+
+    // If section_id is null but subject IS common (or null section on common)
+    // → show all sections for that stage
+    const hasNullSection = secList.some(s => s.id === null);
+    if (hasNullSection) {
+      const stageSections = sections.filter(s => s.stage_id === group.stage_id);
+      if (stageSections.length === 0) {
+        return (
+          <span className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-semibold">
+            All Sections
+          </span>
+        );
+      }
+      return (
+        <div className="flex flex-wrap gap-1">
+          {stageSections.map(s => {
+            const isGen = s.code.toUpperCase().includes('GEN');
+            return (
+              <span key={s.id} title={s.name}
+                className={`text-xs px-2 py-0.5 rounded font-mono font-bold cursor-default
+                  ${isGen ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                {s.code}
+              </span>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // Normal case — show actual assigned sections
     if (!secList.length) {
       return <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500">—</span>;
     }
     return (
       <div className="flex flex-wrap gap-1">
-        {secList.map((s, i) => {
-          if (!s.id) {
-            return (
-              <span key={i} title="Applies to all sections"
-                className="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700 font-semibold cursor-default">
-                All
-              </span>
-            );
-          }
+        {secList.filter(s => s.id !== null).map((s, i) => {
           const isGen = s.code.toUpperCase().includes('GEN');
           return (
             <span key={i} title={s.name}
@@ -1786,6 +1819,25 @@ const handleManualLink = async (libraryId) => {
                 </div>
               )}
             </div>
+            {(() => {
+              const brokenCount = subjectChangeWarning.wasCommon
+                ? assignments.filter(a => {
+                    const subj = subjects.find(s => s.id === a.subject_id);
+                    return (
+                      a.library_id && subj &&
+                      !subj.is_common &&
+                      a.section_id === null &&
+                      subjectChangeWarning.affectedStageIds?.includes(a.stage_id)
+                    );
+                  }).length
+                : 0;
+              return brokenCount > 0 ? (
+                <div className="flex-shrink-0 bg-red-100 border border-red-300 rounded-lg px-3 py-2 text-center min-w-[80px]">
+                  <div className="text-2xl font-bold text-red-700">{brokenCount}</div>
+                  <div className="text-xs text-red-600 font-semibold">Need Section</div>
+                </div>
+              ) : null;
+            })()}
             <button
               onClick={() => {
                 setSubjectChangeWarning(null);
