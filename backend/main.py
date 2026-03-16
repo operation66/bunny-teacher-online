@@ -1794,11 +1794,26 @@ async def auto_link_teacher_profiles(
             _, _, _, teacher_code, teacher_name = parse_library_name(a.library_name)
 
             if not teacher_code:
-                unlinked_list.append(UnlinkedAssignment(
-                    library_id=a.library_id,
-                    library_name=a.library_name,
-                    reason="no_p_code"
-                ))
+                # Try name-based matching as fallback
+                name_matched_profile = None
+                lib_name_lower = (a.library_name or '').lower()
+                for profile in profiles_cache.values():
+                    if profile.name.lower() in lib_name_lower:
+                        name_matched_profile = profile
+                        break
+
+                if name_matched_profile:
+                    if a.teacher_profile_id == name_matched_profile.id:
+                        already_linked += 1
+                    else:
+                        a.teacher_profile_id = name_matched_profile.id
+                        linked += 1
+                else:
+                    unlinked_list.append(UnlinkedAssignment(
+                        library_id=a.library_id,
+                        library_name=a.library_name,
+                        reason="no_p_code"
+                    ))
                 continue
 
             # Get or create profile
@@ -3403,7 +3418,7 @@ async def calculate_payments(
                             f"correctly assigned across {len(unique_sections)} sections "
                             f"({', '.join(section_names)}) — watch time will be split by order ratio."
                         ),
-                        "severity": "info",
+                        "severity": "no_impact",
                         "library_id": lib_id,
                         "library_name": lib_name,
                     })
@@ -3455,7 +3470,7 @@ async def calculate_payments(
                                 f"Library '{lib_name}' has profile {p_code} in DB "
                                 f"but assignment not formally linked. Run Auto-Link to fix."
                             ),
-                            "severity": "warning",
+                            "severity": "finalization_only",
                             "library_id": a.library_id,
                             "library_name": lib_name,
                         })
@@ -3466,7 +3481,7 @@ async def calculate_payments(
                                 f"Library '{lib_name}' has P-code {p_code} "
                                 f"but no matching profile found. Run Auto-Link in Settings."
                             ),
-                            "severity": "warning",
+                            "severity": "finalization_only",
                             "library_id": a.library_id,
                             "library_name": lib_name,
                         })
@@ -3482,7 +3497,7 @@ async def calculate_payments(
                                     f"Library '{lib_name}' matches profile '{profile.name}' ({profile.code}) "
                                     f"by name but is not formally linked. Run Auto-Link to fix."
                                 ),
-                                "severity": "warning",
+                                "severity": "finalization_only",
                                 "library_id": a.library_id,
                                 "library_name": lib_name,
                             })
@@ -3494,7 +3509,7 @@ async def calculate_payments(
                                 f"Library '{lib_name}' has no P-code and no matching "
                                 f"teacher profile found. Add profile manually in Settings."
                             ),
-                            "severity": "warning",
+                            "severity": "finalization_only",
                             "library_id": a.library_id,
                             "library_name": lib_name,
                         })
