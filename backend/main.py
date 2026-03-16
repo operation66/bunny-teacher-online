@@ -3499,7 +3499,7 @@ async def calculate_payments(
                             "library_name": lib_name,
                         })
 
-        # Cross-validation: re-derive final payments from inputs and compare
+# Cross-validation: re-derive final payments from inputs and compare
         verification_status = "matched"
         verification_delta = 0.0
         try:
@@ -3508,12 +3508,10 @@ async def calculate_payments(
                 sec_id = rev.section_id
                 pool = section_pool.get(sec_id, 0)
                 ord_frac = orders_by_section[sec_id] / total_all_orders
-
-            for a in assignments:
-                if a.section_id != sec_id:
-                    continue
-                subj = get_subject(a.subject_id)
-                # Skip broken assignments — they were excluded from calculation
+                for a in assignments:
+                    if a.section_id != sec_id:
+                        continue
+                    subj = get_subject(a.subject_id)
                     if subj and not subj.is_common and a.section_id is None:
                         continue
                     key = (a.library_id, a.subject_id)
@@ -3524,7 +3522,6 @@ async def calculate_payments(
                     tax_amt  = calc_rev * a.tax_rate
                     final    = calc_rev - tax_amt
                     recheck_sum += final
-
             verification_delta = abs(total_payment_sum - recheck_sum)
             if verification_delta > 0.02:
                 verification_status = "mismatched"
@@ -3542,7 +3539,7 @@ async def calculate_payments(
         except Exception as ve:
             logger.error(f"Cross-validation error: {ve}")
             verification_status = "error"
-
+            
         # Determine overall status
         has_critical = any(w["severity"] == "critical" for w in audit_warnings)
         has_warning  = any(w["severity"] == "warning"  for w in audit_warnings)
