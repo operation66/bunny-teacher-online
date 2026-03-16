@@ -692,6 +692,7 @@ const Settings = () => {
   const [newSubject, setNewSubject] = useState({ code: '', name: '', is_common: false });
 
   const [editingSubject, setEditingSubject] = useState(null);
+  const [subjectChangeWarning, setSubjectChangeWarning] = useState(null); // { subjectName, affectedStageIds, wasCommon }
   const [filterStage, setFilterStage] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterSubject, setFilterSubject] = useState('');
@@ -1443,11 +1444,15 @@ const handleManualLink = async (libraryId) => {
                     setEditingSubject(null);
                     loadAll();
                     if (isChangingType) {
-                      if (!wasCommon && editingSubject.is_common) {
-                        flash(`Subject updated — ${result.assignments_updated} assignments consolidated to common.`);
-                      } else {
-                        flash(`Subject updated — ${result.assignments_updated} assignments removed. Re-run Auto-Match to recreate per-section assignments.`);
-                      }
+                      setSubjectChangeWarning({
+                        subjectName: editingSubject.name,
+                        subjectCode: editingSubject.code,
+                        wasCommon,
+                        becameCommon: editingSubject.is_common,
+                        assignmentsUpdated: result.assignments_updated,
+                        affectedStageIds: result.affected_stage_ids || [],
+                      });
+                      setActiveTab('assignments');
                     } else {
                       flash('Subject updated');
                     }
@@ -1729,6 +1734,60 @@ const handleManualLink = async (libraryId) => {
           <Alert className={msg.type === 'error' ? 'bg-red-50 border-red-300' : 'bg-green-50 border-green-300'}>
             <AlertDescription className={msg.type === 'error' ? 'text-red-800' : 'text-green-800'}>{msg.text}</AlertDescription>
           </Alert>
+        )}
+
+        {subjectChangeWarning && (
+          <div className="border-2 border-orange-400 bg-orange-50 rounded-xl p-4 flex items-start gap-4">
+            <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle className="w-5 h-5 text-orange-600"/>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-orange-900 text-base">
+                ⚠ Action Required — Reset Stage Before Recalculating
+              </p>
+              <p className="text-sm text-orange-800 mt-1">
+                Subject <strong>{subjectChangeWarning.subjectCode} — {subjectChangeWarning.subjectName}</strong> was changed from{' '}
+                <strong>{subjectChangeWarning.wasCommon ? 'Common → Section-specific' : 'Section-specific → Common'}</strong>.{' '}
+                <strong>{subjectChangeWarning.assignmentsUpdated} assignments</strong> were automatically updated.
+              </p>
+              <div className="mt-2 space-y-1">
+                {subjectChangeWarning.wasCommon ? (
+                  <>
+                    <p className="text-sm text-orange-700 font-semibold">What you need to do:</p>
+                    <p className="text-sm text-orange-700">1. Go to <strong>Financials</strong> → select the affected stage</p>
+                    <p className="text-sm text-orange-700">2. Click <strong>Reset Stage</strong> to clear stale payment data</p>
+                    <p className="text-sm text-orange-700">3. Run <strong>Auto-Match</strong> in Assignments to recreate per-section assignments</p>
+                    <p className="text-sm text-orange-700">4. Then <strong>Calculate Payments</strong> again</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-orange-700 font-semibold">What you need to do:</p>
+                    <p className="text-sm text-orange-700">1. Go to <strong>Financials</strong> → select the affected stage</p>
+                    <p className="text-sm text-orange-700">2. Click <strong>Reset Stage</strong> to clear stale payment data</p>
+                    <p className="text-sm text-orange-700">3. Then <strong>Calculate Payments</strong> again</p>
+                  </>
+                )}
+              </div>
+              {subjectChangeWarning.affectedStageIds.length > 0 && (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-orange-700">Affected stages:</span>
+                  {subjectChangeWarning.affectedStageIds.map(stageId => {
+                    const stage = stages.find(s => s.id === stageId);
+                    return stage ? (
+                      <span key={stageId} className="text-xs bg-orange-200 text-orange-800 px-2 py-0.5 rounded font-mono font-bold">
+                        {stage.code} — {stage.name}
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setSubjectChangeWarning(null)}
+              className="text-orange-400 hover:text-orange-600 flex-shrink-0">
+              <X className="w-5 h-5"/>
+            </button>
+          </div>
         )}
 
         <div className="flex gap-1 border-b overflow-x-auto">
