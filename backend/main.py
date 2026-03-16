@@ -3218,38 +3218,74 @@ async def calculate_payments(
         total_all_orders  = sum(rev.total_orders for rev in section_revenues) or 1
         orders_by_section = {rev.section_id: rev.total_orders for rev in section_revenues}
 
-        # ── STEP 1: Allocate common watch time per section ────────────────────
-        # Each common assignment belongs to ONE section (auto-match creates one per section).
-        # allocated_wt = raw_wt * (section_orders / total_all_orders)
+        # ── Detect broken assignments (section-specific with null section_id) ─
+        broken_assignments = [
+            a for a in assignments
+            if a.section_id is None
+            and get_subject(a.subject_id)
+            and not get_subject(a.subject_id).is_common
+        ]
+        if broken_assignments:
+            broken_names = ', '.join(f"'{a.library_name}'" for a in broken_assignments[:5])
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{len(broken_assignments)} assignment(s) have no section assigned but subject is "
+                    f"section-specific: {broken_names}. Fix these in Settings → Assignments before calculating."
+                )
+            )
+
+        # ── STEP 1: Allocate watch time per section ───────────────────────────
+        # Common subjects   → ratio = section_orders / total_all_orders
+        # Subset subjects   → ratio = section_orders / sum_of_assigned_sections_orders
+        # null section_id   → already blocked above
         allocated_wt = {rev.section_id: {} for rev in section_revenues}
+
+        # Build per-library subset order totals for section-specific subjects
+        # that appear in only a subset of sections
+        # Key: (library_id, subject_id) → set of section_ids assigned
+        lib_subject_sections = {}
+        for a in assignments:
+            subj = get_subject(a.subject_id)
+            if subj and not subj.is_common and a.section_id is not None:
+                k = (a.library_id, a.subject_id)
+                lib_subject_sections.setdefault(k, set()).add(a.section_id)
 
         for a in assignments:
             subj = get_subject(a.subject_id)
-            if not (subj and subj.is_common):
+            if not subj:
                 continue
             if a.section_id not in allocated_wt:
-                continue  # section not in this period's revenues — skip
+                continue
+
             raw_wt = watch_time_map.get(a.library_id, 0)
-            ratio  = orders_by_section.get(a.section_id, 0) / total_all_orders
-            alloc  = raw_wt * ratio
+
+            if subj.is_common:
+                # Common → use total_all_orders as denominator
+                ratio = orders_by_section.get(a.section_id, 0) / total_all_orders
+            else:
+                # Section-specific subset → denominator is sum of ONLY assigned sections
+                k = (a.library_id, a.subject_id)
+                assigned_secs = lib_subject_sections.get(k, {a.section_id})
+                subset_orders = sum(orders_by_section.get(s, 0) for s in assigned_secs)
+                ratio = orders_by_section.get(a.section_id, 0) / subset_orders if subset_orders > 0 else 0.0
+
+            alloc = raw_wt * ratio
             key = (a.library_id, a.subject_id)
             allocated_wt[a.section_id][key] = alloc
-            logger.info(f"Common lib {a.library_id} → sec {a.section_id}: {alloc:.0f}s (ratio={ratio:.3f})")
+            logger.info(
+                f"{'Common' if subj.is_common else 'Subset'} lib {a.library_id} "
+                f"→ sec {a.section_id}: {alloc:.0f}s (ratio={ratio:.3f})"
+            )
 
         # ── STEP 2: Build section watch-time pools ────────────────────────────
-        # pool = Σ allocated_wt (common) + Σ raw_wt (specific)
+        # pool = Σ allocated_wt (all assignments for this section)
         section_pool = {}
         for rev in section_revenues:
             sec_id = rev.section_id
-            common_total = sum(allocated_wt[sec_id].values())
-            specific_total = sum(
-                watch_time_map.get(a.library_id, 0)
-                for a in assignments
-                if a.section_id == sec_id
-                and not (get_subject(a.subject_id) and get_subject(a.subject_id).is_common)
-            )
-            section_pool[sec_id] = common_total + specific_total
-            logger.info(f"Section {sec_id} pool: common={common_total:.0f}s specific={specific_total:.0f}s total={section_pool[sec_id]:.0f}s")
+            sec_total = sum(allocated_wt[sec_id].values())
+            section_pool[sec_id] = sec_total
+            logger.info(f"Section {sec_id} pool: {sec_total:.0f}s")
 
         # ── STEP 3: Create payment records ────────────────────────────────────
         payments_created  = []
@@ -3262,15 +3298,12 @@ async def calculate_payments(
             pool        = section_pool.get(sec_id, 0)
             ord_frac    = orders_by_section[sec_id] / total_all_orders
 
-            # Common assignments for THIS section only
             for a in assignments:
                 if a.section_id != sec_id:
                     continue
-                subj = get_subject(a.subject_id)
-                if not (subj and subj.is_common):
-                    continue
 
-                key        = (a.library_id, a.subject_id)
+                subj = get_subject(a.subject_id)
+                key = (a.library_id, a.subject_id)
                 teacher_wt = allocated_wt[sec_id].get(key, 0)
                 wt_pct     = (teacher_wt / pool) if pool > 0 else 0.0
 
@@ -3299,47 +3332,27 @@ async def calculate_payments(
                 payments_created.append(payment)
                 total_payment_sum += final
 
-            # Specific assignments for THIS section only
-            for a in assignments:
-                if a.section_id != sec_id:
-                    continue
-                subj = get_subject(a.subject_id)
-                if subj and subj.is_common:
-                    continue  # already handled above
-
-                teacher_wt = watch_time_map.get(a.library_id, 0)
-                wt_pct     = (teacher_wt / pool) if pool > 0 else 0.0
-
-                base_rev = sec_revenue * wt_pct
-                calc_rev = base_rev * a.revenue_percentage
-                tax_amt  = calc_rev * a.tax_rate
-                final    = calc_rev - tax_amt
-
-                payment = TeacherPayment(
-                    period_id=period_id, assignment_id=a.id,
-                    library_id=a.library_id, library_name=a.library_name,
-                    stage_id=stage_id, section_id=sec_id, subject_id=a.subject_id,
-                    total_watch_time_seconds=teacher_wt,
-                    watch_time_percentage=wt_pct,
-                    monthly_watch_breakdown=monthly_map.get(a.library_id, {}),
-                    section_total_orders=sec_orders,
-                    section_order_percentage=ord_frac,
-                    base_revenue=base_rev,
-                    revenue_percentage_applied=a.revenue_percentage,
-                    calculated_revenue=calc_rev,
-                    tax_rate_applied=a.tax_rate,
-                    tax_amount=tax_amt,
-                    final_payment=final,
-                )
-                db.add(payment)
-                payments_created.append(payment)
-                total_payment_sum += final
-
         db.commit()
 
         # ── AUDIT GENERATION ─────────────────────────────────────────────────
         # Build warning list
         audit_warnings = []
+
+        # Warning: section-specific subjects with no section assigned
+        for a in assignments:
+            subj = get_subject(a.subject_id)
+            if subj and not subj.is_common and a.section_id is None:
+                audit_warnings.append({
+                    "code": "MISSING_SECTION_ASSIGNMENT",
+                    "message": (
+                        f"Library '{a.library_name}' has subject '{subj.name}' which is "
+                        f"section-specific but has no section assigned. "
+                        f"This assignment was excluded from calculation."
+                    ),
+                    "severity": "critical",
+                    "library_id": a.library_id,
+                    "library_name": a.library_name,
+                })
 
         # Warning: zero watch time libraries not excluded
         for a in assignments:
@@ -3497,18 +3510,15 @@ async def calculate_payments(
                 ord_frac = orders_by_section[sec_id] / total_all_orders
 
                 for a in assignments:
-                    if a.section_id != sec_id:
-                        continue
-                    subj = get_subject(a.subject_id)
-                    is_common = subj and subj.is_common
-
-                    if is_common:
-                        key = (a.library_id, a.subject_id)
-                        teacher_wt = allocated_wt[sec_id].get(key, 0)
-                    else:
-                        teacher_wt = watch_time_map.get(a.library_id, 0)
-
-                    wt_pct = (teacher_wt / pool) if pool > 0 else 0.0
+                if a.section_id != sec_id:
+                    continue
+                subj = get_subject(a.subject_id)
+                # Skip broken assignments — they were excluded from calculation
+                if subj and not subj.is_common and a.section_id is None:
+                    continue
+                key = (a.library_id, a.subject_id)
+                teacher_wt = allocated_wt[sec_id].get(key, 0)
+                wt_pct = (teacher_wt / pool) if pool > 0 else 0.0
                     base_rev = rev.total_revenue_egp * wt_pct
                     calc_rev = base_rev * a.revenue_percentage
                     tax_amt  = calc_rev * a.tax_rate
