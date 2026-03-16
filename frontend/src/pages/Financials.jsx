@@ -1239,14 +1239,19 @@ const renderAuditBanner = () => {
                 e.stopPropagation();
                 setShowAuditPanel(true);
                 setAuditDetail(null);
+                setLoadingAuditDetail(true);
                 const freshHistory = await financialApi.getCalculationAudits(
-                  selectedPeriod, selectedStage
+                selectedPeriod, selectedStage
                 ).catch(()=>[]);
                 setAuditHistory(freshHistory || []);
                 const targetId = freshHistory?.length > 0
-                  ? freshHistory[0].id
-                  : lastAudit?.id;
-                if(targetId) loadAuditDetail(targetId);
+                ? freshHistory[0].id
+                : lastAudit?.id;
+                if(targetId) {
+                await loadAuditDetail(targetId);
+                } else {
+                setLoadingAuditDetail(false);
+                }
               }}
               className="text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors">
               <FileText className="w-3.5 h-3.5"/>View Audit Trail
@@ -1356,7 +1361,14 @@ const renderAuditBanner = () => {
                     Run #{audit.id} · {audit.created_at ? new Date(audit.created_at).toLocaleString() : ''}
                   </span>
                   {audit.acknowledged && (
-                    <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded">Acknowledged</span>
+                    <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded">
+                      Acknowledged
+                      {audit.acknowledged_at && (
+                        <span className="ml-1 opacity-80">
+                          · {new Date(audit.acknowledged_at).toLocaleString()}
+                        </span>
+                      )}
+                    </span>
                   )}
                 </div>
               )}
@@ -1371,7 +1383,8 @@ const renderAuditBanner = () => {
             {auditHistory.length > 0 && (
               <div className="px-6 pt-4 pb-3 border-b bg-gray-50">
                 <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Calculation Runs ({auditHistory.length})
+                  Calculation Runs for this Stage ({auditHistory.length})
+                  <span className="ml-1 font-normal normal-case text-gray-400">— IDs are global across all stages</span>
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   {auditHistory.map(h => (
@@ -1504,48 +1517,74 @@ const renderAuditBanner = () => {
                         <div key={i} className={`rounded-lg border px-4 py-3 ${
                           w.severity === 'critical'
                             ? 'bg-red-50 border-red-200'
-                            : w.severity === 'info'
-                              ? 'bg-blue-50 border-blue-200'
-                              : w.severity === 'resolved'
-                                ? 'bg-green-50 border-green-200'
-                                : 'bg-yellow-50 border-yellow-200'
+                            : w.severity === 'finalization_only'
+                              ? 'bg-purple-50 border-purple-200'
+                              : w.severity === 'info'
+                                ? 'bg-blue-50 border-blue-200'
+                                : w.severity === 'no_impact'
+                                  ? 'bg-gray-50 border-gray-200'
+                                  : w.severity === 'resolved'
+                                    ? 'bg-green-50 border-green-200'
+                                    : 'bg-yellow-50 border-yellow-200'
                         }`}>
                           <div className="flex items-start gap-2">
-                            {w.severity === 'info'
-                              ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500"/>
-                              : w.severity === 'resolved'
-                                ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500"/>
-                                : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-                                    w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
-                                  }`}/>
+                            {w.severity === 'no_impact'
+                              ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400"/>
+                              : w.severity === 'info'
+                                ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500"/>
+                                : w.severity === 'resolved'
+                                  ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500"/>
+                                  : w.severity === 'finalization_only'
+                                    ? <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-purple-500"/>
+                                    : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                                        w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
+                                      }`}/>
                             }
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                                 <code className={`text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
                                   w.severity === 'critical'
                                     ? 'bg-red-100 text-red-700'
-                                    : w.severity === 'info'
-                                      ? 'bg-blue-100 text-blue-700'
-                                      : 'bg-yellow-100 text-yellow-700'
+                                    : w.severity === 'finalization_only'
+                                      ? 'bg-purple-100 text-purple-700'
+                                      : w.severity === 'no_impact'
+                                        ? 'bg-gray-100 text-gray-500'
+                                        : w.severity === 'info'
+                                          ? 'bg-blue-100 text-blue-700'
+                                          : 'bg-yellow-100 text-yellow-700'
                                 }`}>{w.code}</code>
                                 <span className={`text-xs font-semibold uppercase ${
                                   w.severity === 'critical'
                                     ? 'text-red-600'
-                                    : w.severity === 'info'
-                                      ? 'text-blue-600'
-                                      : w.severity === 'resolved'
-                                        ? 'text-green-600'
-                                        : 'text-yellow-600'
-                                }`}>{w.severity}</span>
+                                    : w.severity === 'finalization_only'
+                                      ? 'text-purple-600'
+                                      : w.severity === 'no_impact'
+                                        ? 'text-gray-400'
+                                        : w.severity === 'info'
+                                          ? 'text-blue-600'
+                                          : w.severity === 'resolved'
+                                            ? 'text-green-600'
+                                            : 'text-yellow-600'
+                                }`}>
+                                  {w.severity === 'finalization_only'
+                                    ? 'affects finalization only'
+                                    : w.severity === 'no_impact'
+                                      ? 'no impact'
+                                      : w.severity}
+                                </span>
                               </div>
                               <p className={`text-sm ${
                                 w.severity === 'critical'
                                   ? 'text-red-800'
-                                  : w.severity === 'info'
-                                    ? 'text-blue-800'
-                                    : w.severity === 'resolved'
-                                      ? 'text-green-800'
-                                      : 'text-yellow-800'
+                                  : w.severity === 'finalization_only'
+                                    ? 'text-purple-800'
+                                    : w.severity === 'no_impact'
+                                      ? 'text-gray-500'
+                                      : w.severity === 'info'
+                                        ? 'text-blue-800'
+                                        : w.severity === 'resolved'
+                                          ? 'text-green-800'
+                                          : 'text-yellow-800'
                               }`}>{w.message}</p>
                               {w.library_id && (
                                 <div className="mt-1 text-xs text-gray-500 font-mono">
@@ -1688,12 +1727,17 @@ const renderAuditBanner = () => {
                 {audit.acknowledged && (
                   <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2 text-sm text-green-700">
                     <CheckCircle className="w-4 h-4 text-green-500"/>
-                    Warnings acknowledged — finalization is unlocked.
-                    {audit.acknowledged_at && (
-                      <span className="text-green-500 text-xs ml-1">
-                        ({new Date(audit.acknowledged_at).toLocaleString()})
-                      </span>
-                    )}
+                    <div>
+                      <span className="font-semibold">Warnings acknowledged — finalization is unlocked.</span>
+                      {audit.acknowledged_at && (
+                        <div className="text-xs text-green-600 mt-0.5">
+                          Acknowledged on {new Date(audit.acknowledged_at).toLocaleString()}
+                          {audit.acknowledged_by_user_id && (
+                            <span className="ml-1">(User ID: {audit.acknowledged_by_user_id})</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2502,14 +2546,19 @@ const renderCalculateBar = () => {
                   onClick={async ()=>{
                     setShowAuditPanel(true);
                     setAuditDetail(null);
+                    setLoadingAuditDetail(true);
                     const freshHistory = await financialApi.getCalculationAudits(
-                      selectedPeriod, selectedStage
+                    selectedPeriod, selectedStage
                     ).catch(()=>[]);
                     setAuditHistory(freshHistory || []);
                     const targetId = freshHistory?.length > 0
-                      ? freshHistory[0].id
-                      : lastAudit?.id;
-                    if(targetId) loadAuditDetail(targetId);
+                    ? freshHistory[0].id
+                    : lastAudit?.id;
+                    if(targetId) {
+                    await loadAuditDetail(targetId);
+                    } else {
+                    setLoadingAuditDetail(false);
+                    }
                   }}
                   className="border-indigo-400 text-indigo-700 hover:bg-indigo-50">
                   <ShieldCheck className="w-4 h-4 mr-1"/>Audit Trail
