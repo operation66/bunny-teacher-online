@@ -199,7 +199,9 @@ const Financials = () => {
   const [resetting, setResetting]               = useState(false);
   const [resetSummary, setResetSummary]         = useState(null);
   const [resetConfirmed, setResetConfirmed]     = useState(false);
-
+  const [subjectChangeWarning, setSubjectChangeWarning] = useState(() => {
+    try { const s = localStorage.getItem('subject_change_warning'); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   const showMsg = (text, type='success') => {
@@ -603,6 +605,18 @@ const rejectSelected = () => {
       setAuditHistory([]);
       setFinancialData(prev => prev ? {...prev, teacher_payments: []} : prev);
       setFinalizationsMap({});
+      // Check if this reset clears the subject change warning
+      if (subjectChangeWarning?.affectedStageIds?.includes(selectedStage)) {
+        const remaining = subjectChangeWarning.affectedStageIds.filter(id => id !== selectedStage);
+        if (remaining.length === 0) {
+          setSubjectChangeWarning(null);
+          try { localStorage.removeItem('subject_change_warning'); } catch {}
+        } else {
+          const updated = { ...subjectChangeWarning, affectedStageIds: remaining };
+          setSubjectChangeWarning(updated);
+          try { localStorage.setItem('subject_change_warning', JSON.stringify(updated)); } catch {}
+        }
+      }
       showMsg(
         `Reset complete — deleted ${result.deleted_payments} payments, ` +
         `${result.deleted_finalizations} finalizations, ` +
@@ -3398,9 +3412,10 @@ const renderFinalizationModal = () => {
         {financialData && (
           <>
             {renderSummary()}
+            {renderSubjectChangeWarningBanner()}
             {/* Audit banner appears between summary and section cards */}
-            {renderAuditBanner()}
-            {renderSections()}
+            {!isStageWarningLocked && renderAuditBanner()}
+            {!isStageWarningLocked && renderSections()}
             {renderCalculateBar()}
           </>
         )}
