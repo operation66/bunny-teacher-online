@@ -203,6 +203,81 @@ const Financials = () => {
     try { const s = localStorage.getItem('subject_change_warning'); return s ? JSON.parse(s) : null; } catch { return null; }
   });
 
+  // ── Subject change warning lock ───────────────────────────────────────────
+  const isStageWarningLocked = !!(
+    subjectChangeWarning &&
+    selectedStage &&
+    subjectChangeWarning.affectedStageIds?.includes(selectedStage)
+  );
+
+  const renderSubjectChangeWarningBanner = () => {
+    if (!subjectChangeWarning) return null;
+    if (!selectedStage) return null;
+    const isThisStageAffected = subjectChangeWarning.affectedStageIds?.includes(selectedStage);
+    // Show a softer banner for non-affected stages, full lock for affected
+    return (
+      <div className={`border-2 rounded-xl p-4 flex items-start gap-4
+        ${isThisStageAffected
+          ? 'border-red-400 bg-red-50'
+          : 'border-orange-300 bg-orange-50'}`}>
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0
+          ${isThisStageAffected ? 'bg-red-100' : 'bg-orange-100'}`}>
+          <AlertTriangle className={`w-5 h-5 ${isThisStageAffected ? 'text-red-600' : 'text-orange-600'}`}/>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className={`font-bold text-base ${isThisStageAffected ? 'text-red-900' : 'text-orange-900'}`}>
+            {isThisStageAffected
+              ? '🔒 This stage is locked — Reset Stage to continue'
+              : '⚠ Subject change pending — some stages need reset'}
+          </p>
+          <p className={`text-sm mt-1 ${isThisStageAffected ? 'text-red-800' : 'text-orange-800'}`}>
+            Subject <strong>{subjectChangeWarning.subjectCode} — {subjectChangeWarning.subjectName}</strong> was changed from{' '}
+            <strong>{subjectChangeWarning.wasCommon ? 'Common → Section-specific' : 'Section-specific → Common'}</strong>.
+            {isThisStageAffected
+              ? ' Existing payment calculations for this stage are now stale and must be reset.'
+              : ' Select an affected stage below to reset it.'}
+          </p>
+          {isThisStageAffected && (
+            <div className="mt-3 space-y-1">
+              {subjectChangeWarning.wasCommon ? (
+                <>
+                  <p className="text-sm text-red-700 font-semibold">Steps to unlock:</p>
+                  <p className="text-sm text-red-700">1. Click <strong>Reset Stage</strong> below ↓</p>
+                  <p className="text-sm text-red-700">2. Go to <strong>Settings → Assignments</strong> and run <strong>Auto-Match</strong></p>
+                  <p className="text-sm text-red-700">3. Return here and <strong>Calculate Payments</strong></p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-red-700 font-semibold">Steps to unlock:</p>
+                  <p className="text-sm text-red-700">1. Click <strong>Reset Stage</strong> below ↓</p>
+                  <p className="text-sm text-red-700">2. <strong>Calculate Payments</strong> again</p>
+                </>
+              )}
+            </div>
+          )}
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <span className={`text-xs font-semibold ${isThisStageAffected ? 'text-red-700' : 'text-orange-700'}`}>
+              Pending stages:
+            </span>
+            {subjectChangeWarning.affectedStageIds?.map(stageId => {
+              const stage = stages.find(s => s.id === stageId);
+              return stage ? (
+                <span key={stageId}
+                  className={`text-xs px-2 py-0.5 rounded font-mono font-bold cursor-pointer
+                    ${stageId === selectedStage
+                      ? 'bg-red-200 text-red-800 ring-2 ring-red-400'
+                      : 'bg-orange-200 text-orange-800 hover:bg-orange-300'}`}
+                  onClick={() => { setSelectedStage(stageId); setStageCollapsed(true); }}>
+                  {stage.code}
+                </span>
+              ) : null;
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ── Helpers ──────────────────────────────────────────────────────────────
   const showMsg = (text, type='success') => {
     setMessage({text,type});
@@ -2354,12 +2429,42 @@ const renderAuditBanner = () => {
 const renderCalculateBar = () => {
     if(!financialData) return null;
     const hasPayments = financialData.teacher_payments.length > 0;
-    const canFinalize = hasPayments && (
-      !lastAudit ||                          // no audit yet → still allow
-      lastAudit.status === 'passed' ||       // clean run
-      lastAudit.acknowledged                 // admin acknowledged warnings
+    const canFinalize = hasPayments && !isStageWarningLocked && (
+      !lastAudit ||
+      lastAudit.status === 'passed' ||
+      lastAudit.acknowledged
     );
-  
+
+    if (isStageWarningLocked) {
+      return (
+        <Card className="border-2 border-red-300 bg-red-50">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h3 className="font-bold text-red-900 flex items-center gap-2">
+                  🔒 Stage Locked — Reset Required
+                </h3>
+                <p className="text-sm text-red-700 mt-0.5">
+                  All actions are disabled until you reset this stage.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={()=>setShowReportModal(true)}
+                  className="border-gray-400 text-gray-700 hover:bg-gray-100">
+                  <FileText className="w-4 h-4 mr-1"/>Build Report
+                </Button>
+                <Button
+                  onClick={()=>{ setResetConfirmed(false); setShowResetModal(true); }}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold px-6 animate-pulse">
+                  <RefreshCw className="w-4 h-4 mr-2"/>Reset Stage to Unlock
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
     return (
       <Card className={`border-2 ${revenueChanged?'border-orange-300 bg-orange-50':'border-blue-200 bg-blue-50'}`}>
         <CardContent className="p-5">
@@ -2397,12 +2502,10 @@ const renderCalculateBar = () => {
                   onClick={async ()=>{
                     setShowAuditPanel(true);
                     setAuditDetail(null);
-                    // Always reload history fresh so we have latest runs
                     const freshHistory = await financialApi.getCalculationAudits(
                       selectedPeriod, selectedStage
                     ).catch(()=>[]);
                     setAuditHistory(freshHistory || []);
-                    // Auto-load the most recent run
                     const targetId = freshHistory?.length > 0
                       ? freshHistory[0].id
                       : lastAudit?.id;
