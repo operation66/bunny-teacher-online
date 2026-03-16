@@ -303,7 +303,6 @@ const UnmatchedModal = ({ results, stages, sections, subjects, onClose, onSaveMa
 
   const [editingItems, setEditingItems] = useState(() => buildInitial(initialUnmatched));
   const [saving, setSaving] = useState(new Set());
-  const [editingSubject, setEditingSubject] = useState(null);
   const [filterStage, setFilterStage] = useState('');
   const [selectedLibIds, setSelectedLibIds] = useState(new Set());
   const [showBulkSection, setShowBulkSection] = useState(false);
@@ -692,6 +691,7 @@ const Settings = () => {
   const [newSection, setNewSection] = useState({ stage_id: '', code: '', name: '' });
   const [newSubject, setNewSubject] = useState({ code: '', name: '', is_common: false });
 
+  const [editingSubject, setEditingSubject] = useState(null);
   const [filterStage, setFilterStage] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterSubject, setFilterSubject] = useState('');
