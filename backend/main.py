@@ -3509,16 +3509,16 @@ async def calculate_payments(
                 pool = section_pool.get(sec_id, 0)
                 ord_frac = orders_by_section[sec_id] / total_all_orders
 
-                for a in assignments:
+            for a in assignments:
                 if a.section_id != sec_id:
                     continue
                 subj = get_subject(a.subject_id)
                 # Skip broken assignments — they were excluded from calculation
-                if subj and not subj.is_common and a.section_id is None:
-                    continue
-                key = (a.library_id, a.subject_id)
-                teacher_wt = allocated_wt[sec_id].get(key, 0)
-                wt_pct = (teacher_wt / pool) if pool > 0 else 0.0
+                    if subj and not subj.is_common and a.section_id is None:
+                        continue
+                    key = (a.library_id, a.subject_id)
+                    teacher_wt = allocated_wt[sec_id].get(key, 0)
+                    wt_pct = (teacher_wt / pool) if pool > 0 else 0.0
                     base_rev = rev.total_revenue_egp * wt_pct
                     calc_rev = base_rev * a.revenue_percentage
                     tax_amt  = calc_rev * a.tax_rate
