@@ -692,7 +692,9 @@ const Settings = () => {
   const [newSubject, setNewSubject] = useState({ code: '', name: '', is_common: false });
 
   const [editingSubject, setEditingSubject] = useState(null);
-  const [subjectChangeWarning, setSubjectChangeWarning] = useState(null); // { subjectName, affectedStageIds, wasCommon }
+  const [subjectChangeWarning, setSubjectChangeWarning] = useState(() => {
+    try { const s = localStorage.getItem('subject_change_warning'); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
   const [filterStage, setFilterStage] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterSubject, setFilterSubject] = useState('');
@@ -1444,14 +1446,16 @@ const handleManualLink = async (libraryId) => {
                     setEditingSubject(null);
                     loadAll();
                     if (isChangingType) {
-                      setSubjectChangeWarning({
+                      const warning = {
                         subjectName: editingSubject.name,
                         subjectCode: editingSubject.code,
                         wasCommon,
                         becameCommon: editingSubject.is_common,
                         assignmentsUpdated: result.assignments_updated,
                         affectedStageIds: result.affected_stage_ids || [],
-                      });
+                      };
+                      setSubjectChangeWarning(warning);
+                      try { localStorage.setItem('subject_change_warning', JSON.stringify(warning)); } catch {}
                       setActiveTab('assignments');
                     } else {
                       flash('Subject updated');
@@ -1783,7 +1787,10 @@ const handleManualLink = async (libraryId) => {
               )}
             </div>
             <button
-              onClick={() => setSubjectChangeWarning(null)}
+              onClick={() => {
+                setSubjectChangeWarning(null);
+                try { localStorage.removeItem('subject_change_warning'); } catch {}
+              }}
               className="text-orange-400 hover:text-orange-600 flex-shrink-0">
               <X className="w-5 h-5"/>
             </button>
