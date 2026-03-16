@@ -1233,47 +1233,50 @@ def update_subject(subject_id: int, subject: SubjectCreate, db: Session = Depend
     db_subject.is_common = subject.is_common
     db.flush()
     assignments_updated = 0
+    affected_stage_ids = []
     if is_common_changing:
         affected = db.query(TeacherAssignment).filter(
             TeacherAssignment.subject_id == subject_id
         ).all()
+        affected_stage_ids = list(set(a.stage_id for a in affected))
+
         if not old_is_common and subject.is_common:
+            # Section → Common:
+            # Keep one assignment per library (the first one), set section_id = null
+            # Delete the duplicates (other sections for same library)
             seen_libraries = set()
+            to_keep = []
             to_delete = []
-            to_create = []
             for a in affected:
                 if a.library_id not in seen_libraries:
                     seen_libraries.add(a.library_id)
-                    to_create.append({
-                        "library_id": a.library_id,
-                        "library_name": a.library_name,
-                        "stage_id": a.stage_id,
-                        "tax_rate": a.tax_rate,
-                        "revenue_percentage": a.revenue_percentage,
-                        "teacher_profile_id": a.teacher_profile_id,
-                    })
-                to_delete.append(a.id)
-            db.query(TeacherAssignment).filter(
-                TeacherAssignment.id.in_(to_delete)
-            ).delete(synchronize_session=False)
-            for data in to_create:
-                db.add(TeacherAssignment(
-                    library_id=data["library_id"],
-                    library_name=data["library_name"],
-                    stage_id=data["stage_id"],
-                    section_id=None,
-                    subject_id=subject_id,
-                    tax_rate=data["tax_rate"],
-                    revenue_percentage=data["revenue_percentage"],
-                    teacher_profile_id=data["teacher_profile_id"],
-                ))
-                assignments_updated += 1
+                    to_keep.append(a)
+                else:
+                    to_delete.append(a.id)
+
+            # Delete duplicate assignments (keep one per library)
+            if to_delete:
+                db.query(TeacherPayment).filter(
+                    TeacherPayment.assignment_id.in_(to_delete)
+                ).delete(synchronize_session=False)
+                db.query(TeacherAssignment).filter(
+                    TeacherAssignment.id.in_(to_delete)
+                ).delete(synchronize_session=False)
+
+            # Update kept assignments: set section_id = null
+            for a in to_keep:
+                a.section_id = None
+                a.updated_at = datetime.now(pytz.UTC)
+            assignments_updated = len(to_keep)
+
         else:
-            ids_to_delete = [a.id for a in affected]
-            db.query(TeacherAssignment).filter(
-                TeacherAssignment.id.in_(ids_to_delete)
-            ).delete(synchronize_session=False)
-            assignments_updated = len(ids_to_delete)
+            # Common → Section:
+            # Keep assignments as-is — section_id is already null
+            # User must run Auto-Match to recreate per-section assignments
+            # Just flag them as updated so user knows to review
+            for a in affected:
+                a.updated_at = datetime.now(pytz.UTC)
+            assignments_updated = len(affected)
     db.commit()
     db.refresh(db_subject)
     return {
@@ -1284,6 +1287,7 @@ def update_subject(subject_id: int, subject: SubjectCreate, db: Session = Depend
         "created_at": db_subject.created_at.isoformat() if db_subject.created_at else None,
         "assignments_updated": assignments_updated,
         "is_common_changed": is_common_changing,
+        "affected_stage_ids": affected_stage_ids,
     }
 
 
