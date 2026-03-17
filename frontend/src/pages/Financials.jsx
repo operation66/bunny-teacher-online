@@ -1209,12 +1209,19 @@ const renderAuditBanner = () => {
               )}
               {isWarnings && (
                 <span className="font-semibold text-yellow-800">
-                  {warnings.filter(w=>w.severity!=='info').length} warning{warnings.filter(w=>w.severity!=='info').length!==1?'s':''} — click to review
-                  {warnings.filter(w=>w.severity==='info').length > 0 && (
-                    <span className="text-blue-600 ml-2 font-normal text-xs">
-                      + {warnings.filter(w=>w.severity==='info').length} info
+                  {warnings.filter(w=>w.severity==='warning'||w.severity==='critical').length} warning{warnings.filter(w=>w.severity==='warning'||w.severity==='critical').length!==1?'s':''} — click to review
+                  {warnings.filter(w=>w.severity==='finalization_only').length > 0 && (
+                    <span className="text-purple-600 ml-2 font-normal text-xs">
+                      + {warnings.filter(w=>w.severity==='finalization_only').length} finalization only
                     </span>
                   )}
+                  {warnings.filter(w=>w.severity==='no_impact').length > 0 && (
+                    <span className="text-gray-500 ml-2 font-normal text-xs">
+                      + {warnings.filter(w=>w.severity==='no_impact').length} no impact
+                    </span>
+                  )}
+                </span>
+              )}
                 </span>
               )}
               {(isFailed || isMismatch) && (
