@@ -3578,8 +3578,9 @@ async def calculate_payments(
             
         # Determine overall status
         has_critical = any(w["severity"] == "critical" for w in audit_warnings)
-        has_warning  = any(w["severity"] == "warning"  for w in audit_warnings)
-        # "info" severity (e.g. common subject confirmations) does not affect status
+        has_warning  = any(w["severity"] == "warning" for w in audit_warnings)
+        has_finalization_only = any(w["severity"] == "finalization_only" for w in audit_warnings)
+        # "info", "no_impact", "finalization_only" do not affect calculation status
         audit_status = "failed" if has_critical else ("warnings" if has_warning else "passed")
 
         # Build snapshots
