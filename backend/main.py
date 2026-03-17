@@ -1906,7 +1906,31 @@ async def link_teacher_profile(
 # ============================================
 # CALCULATION AUDIT ENDPOINTS
 # ============================================
+@app.get("/calculation-audits/{audit_id}/detail")
+def get_audit_detail(
+    audit_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    """Returns the full audit record including snapshots and formula breakdown."""
+    audit = db.query(CalculationAudit).filter(CalculationAudit.id == audit_id).first()
+    if not audit:
+        raise HTTPException(status_code=404, detail="Audit not found")
 
+    # Build per-section formula steps from inputs_snapshot
+    inputs = audit.inputs_snapshot or {}
+    outputs = audit.outputs_snapshot or {}
+    section_revenues = inputs.get("section_revenues", {})
+    watch_times = inputs.get("watch_time_map", inputs.get("watch_times", {}))
+
+    # Reconstruct formula steps per section from inputs snapshot
+    formula_steps = {}
+    for sec_id_str, rev_data in section_revenues.items():
+        formula_steps[sec_id_str] = {
+            "total_orders": rev_data.get("total_orders", 0),
+            "total_revenue_egp": rev_data.get("total_revenue_egp", 0),
+        }
+        
 @app.get("/calculation-audits/{period_id}/{stage_id}", response_model=List[CalculationAuditSummary])
 def get_calculation_audits(
     period_id: int,
@@ -1971,30 +1995,7 @@ def acknowledge_audit(
         "acknowledged_by": current_user.email,
         "acknowledged_at": audit.acknowledged_at.isoformat(),
     }
-@app.get("/calculation-audits/{audit_id}/detail")
-def get_audit_detail(
-    audit_id: int,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    """Returns the full audit record including snapshots and formula breakdown."""
-    audit = db.query(CalculationAudit).filter(CalculationAudit.id == audit_id).first()
-    if not audit:
-        raise HTTPException(status_code=404, detail="Audit not found")
 
-    # Build per-section formula steps from inputs_snapshot
-    inputs = audit.inputs_snapshot or {}
-    outputs = audit.outputs_snapshot or {}
-    section_revenues = inputs.get("section_revenues", {})
-    watch_times = inputs.get("watch_time_map", inputs.get("watch_times", {}))
-
-    # Reconstruct formula steps per section from inputs snapshot
-    formula_steps = {}
-    for sec_id_str, rev_data in section_revenues.items():
-        formula_steps[sec_id_str] = {
-            "total_orders": rev_data.get("total_orders", 0),
-            "total_revenue_egp": rev_data.get("total_revenue_egp", 0),
-        }
 
     # Build per-library output rows from outputs_snapshot
     output_rows = []
@@ -3368,6 +3369,26 @@ async def calculate_payments(
                     "library_id": a.library_id,
                     "library_name": a.library_name,
                 })
+
+        # Info: common subjects with null section_id (correctly handled as all-sections)
+        for a in assignments:
+            subj = get_subject(a.subject_id)
+            if subj and subj.is_common and a.section_id is None:
+                audit_warnings.append({
+                    "code": "COMMON_SUBJECT_NULL_SECTION",
+                    "message": (
+                        f"Library '{a.library_name}' is a common subject ({subj.name}) "
+                        f"with no specific section — watch time will be split across all "
+                        f"sections by order ratio. This is correct behavior."
+                    ),
+                    "severity": "no_impact",
+                    "library_id": a.library_id,
+                    "library_name": a.library_name,
+                })
+
+        # Warning: zero watch time libraries not excluded
+        for a in assignments:
+            if watch_time_map.get(a.library_id, 0) == 0:
 
         # Warning: zero watch time libraries not excluded
         for a in assignments:
