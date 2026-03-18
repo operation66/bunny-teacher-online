@@ -1820,6 +1820,59 @@ def get_teacher_profiles(
     return profiles
 
 
+@app.get("/teacher-profiles/with-libraries")
+def get_teacher_profiles_with_libraries(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    profiles = db.query(TeacherProfileModel).order_by(TeacherProfileModel.name).all()
+    result = []
+    for p in profiles:
+        linked = db.query(TeacherAssignment).filter(
+            TeacherAssignment.teacher_profile_id == p.id
+        ).all()
+        seen = set()
+        unique_libs = []
+        for a in linked:
+            if a.library_id not in seen:
+                seen.add(a.library_id)
+                unique_libs.append({
+                    "library_id": a.library_id,
+                    "library_name": a.library_name,
+                })
+        result.append({
+            "id": p.id,
+            "code": p.code,
+            "name": p.name,
+            "notes": p.notes,
+            "created_at": p.created_at,
+            "updated_at": p.updated_at,
+            "libraries": unique_libs,
+        })
+    return result
+
+
+@app.get("/teacher-profiles/unlinked")
+async def get_unlinked_assignments(db: Session = Depends(get_db)):
+    rows = db.query(TeacherAssignment).filter(
+        TeacherAssignment.teacher_profile_id == None
+    ).all()
+    seen = {}
+    for row in rows:
+        if row.library_id not in seen:
+            p_match = re.search(r'[Pp](\d{4})', row.library_name or '')
+            if not p_match:
+                reason = 'no_p_code'
+            else:
+                reason = 'profile_not_found'
+            seen[row.library_id] = {
+                "library_id": row.library_id,
+                "library_name": row.library_name,
+                "reason": reason,
+            }
+    return list(seen.values())
+
+
 @app.post("/teacher-profiles/", response_model=TeacherProfileSchema)
 def create_teacher_profile(
     profile: TeacherProfileCreate,
@@ -1836,6 +1889,87 @@ def create_teacher_profile(
     db.commit()
     db.refresh(db_profile)
     return db_profile
+
+
+@app.post("/teacher-profiles/auto-link", response_model=AutoLinkResponse)
+async def auto_link_teacher_profiles(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        assignments = db.query(TeacherAssignment).all()
+        profiles_cache = {
+            p.code: p for p in db.query(TeacherProfileModel).all()
+        }
+
+        linked = 0
+        already_linked = 0
+        profiles_created = 0
+        unlinked_list: List[UnlinkedAssignment] = []
+
+        for a in assignments:
+            _, _, _, teacher_code, teacher_name = parse_library_name(a.library_name)
+
+            if not teacher_code:
+                name_matched_profile = None
+                lib_name_lower = (a.library_name or '').lower()
+                for profile in profiles_cache.values():
+                    if profile.name.lower() in lib_name_lower:
+                        name_matched_profile = profile
+                        break
+
+                if name_matched_profile:
+                    if a.teacher_profile_id == name_matched_profile.id:
+                        already_linked += 1
+                    else:
+                        a.teacher_profile_id = name_matched_profile.id
+                        linked += 1
+                else:
+                    unlinked_list.append(UnlinkedAssignment(
+                        library_id=a.library_id,
+                        library_name=a.library_name,
+                        reason="no_p_code"
+                    ))
+                continue
+
+            if teacher_code not in profiles_cache:
+                display_name = teacher_name or teacher_code
+                new_profile = TeacherProfileModel(
+                    code=teacher_code,
+                    name=display_name
+                )
+                db.add(new_profile)
+                db.flush()
+                profiles_cache[teacher_code] = new_profile
+                profiles_created += 1
+
+            profile = profiles_cache[teacher_code]
+
+            if a.teacher_profile_id == profile.id:
+                already_linked += 1
+            else:
+                a.teacher_profile_id = profile.id
+                linked += 1
+
+        db.commit()
+        logger.info(
+            f"Auto-link: {linked} linked, {already_linked} already linked, "
+            f"{profiles_created} profiles created, {len(unlinked_list)} unlinked"
+        )
+
+        return AutoLinkResponse(
+            total_assignments=len(assignments),
+            linked=linked,
+            already_linked=already_linked,
+            unlinked=len(unlinked_list),
+            profiles_created=profiles_created,
+            unlinked_assignments=unlinked_list
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Auto-link error: {e}")
+        raise HTTPException(status_code=500, detail=f"Auto-link failed: {str(e)}")
 
 
 @app.put("/teacher-profiles/{profile_id}", response_model=TeacherProfileSchema)
@@ -1869,7 +2003,6 @@ def delete_teacher_profile(
     ).first()
     if not db_profile:
         raise HTTPException(status_code=404, detail="Profile not found")
-    # Unlink assignments before deleting
     db.query(TeacherAssignment).filter(
         TeacherAssignment.teacher_profile_id == profile_id
     ).update({"teacher_profile_id": None})
@@ -1877,119 +2010,6 @@ def delete_teacher_profile(
     db.commit()
     return {"success": True}
 
-
-@app.post("/teacher-profiles/auto-link", response_model=AutoLinkResponse)
-async def auto_link_teacher_profiles(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
-):
-    """
-    Scans all TeacherAssignments, extracts P-codes from library names,
-    creates TeacherProfile records if needed, and links assignments.
-    Assignments with no P-code are returned in unlinked_assignments list
-    for manual linking in Settings.
-    """
-    try:
-        assignments = db.query(TeacherAssignment).all()
-        profiles_cache = {
-            p.code: p for p in db.query(TeacherProfileModel).all()
-        }
-
-        linked = 0
-        already_linked = 0
-        profiles_created = 0
-        unlinked_list: List[UnlinkedAssignment] = []
-
-        for a in assignments:
-            _, _, _, teacher_code, teacher_name = parse_library_name(a.library_name)
-
-            if not teacher_code:
-                # Try name-based matching as fallback
-                name_matched_profile = None
-                lib_name_lower = (a.library_name or '').lower()
-                for profile in profiles_cache.values():
-                    if profile.name.lower() in lib_name_lower:
-                        name_matched_profile = profile
-                        break
-
-                if name_matched_profile:
-                    if a.teacher_profile_id == name_matched_profile.id:
-                        already_linked += 1
-                    else:
-                        a.teacher_profile_id = name_matched_profile.id
-                        linked += 1
-                else:
-                    unlinked_list.append(UnlinkedAssignment(
-                        library_id=a.library_id,
-                        library_name=a.library_name,
-                        reason="no_p_code"
-                    ))
-                continue
-
-            # Get or create profile
-            if teacher_code not in profiles_cache:
-                display_name = teacher_name or teacher_code
-                new_profile = TeacherProfileModel(
-                    code=teacher_code,
-                    name=display_name
-                )
-                db.add(new_profile)
-                db.flush()  # get the ID without committing
-                profiles_cache[teacher_code] = new_profile
-                profiles_created += 1
-
-            profile = profiles_cache[teacher_code]
-
-            if a.teacher_profile_id == profile.id:
-                already_linked += 1
-            else:
-                a.teacher_profile_id = profile.id
-                linked += 1
-
-        db.commit()
-        logger.info(
-            f"Auto-link: {linked} linked, {already_linked} already linked, "
-            f"{profiles_created} profiles created, {len(unlinked_list)} unlinked"
-        )
-
-        return AutoLinkResponse(
-            total_assignments=len(assignments),
-            linked=linked,
-            already_linked=already_linked,
-            unlinked=len(unlinked_list),
-            profiles_created=profiles_created,
-            unlinked_assignments=unlinked_list
-        )
-
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Auto-link error: {e}")
-        raise HTTPException(status_code=500, detail=f"Auto-link failed: {str(e)}")
-
-
-@app.get("/teacher-profiles/unlinked")
-async def get_unlinked_assignments(db: Session = Depends(get_db)):
-    rows = db.query(TeacherAssignment).filter(
-        TeacherAssignment.teacher_profile_id == None
-    ).all()
-
-    # Deduplicate by library_id — keep only one row per library
-    seen = {}
-    for row in rows:
-        if row.library_id not in seen:
-            # Determine reason
-            p_match = re.search(r'[Pp](\d{4})', row.library_name or '')
-            if not p_match:
-                reason = 'no_p_code'
-            else:
-                reason = 'profile_not_found'
-            seen[row.library_id] = {
-                "library_id": row.library_id,
-                "library_name": row.library_name,
-                "reason": reason,
-            }
-
-    return list(seen.values())
 
 @app.put("/teacher-assignments/{assignment_id}/link-profile")
 async def link_teacher_profile(
@@ -2001,18 +2021,17 @@ async def link_teacher_profile(
     if not profile_id:
         raise HTTPException(status_code=400, detail="teacher_profile_id required")
 
-    # Find the target assignment to get its library_id
     target = db.query(TeacherAssignment).filter(TeacherAssignment.id == assignment_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # Link ALL assignments with the same library_id
     db.query(TeacherAssignment).filter(
         TeacherAssignment.library_id == target.library_id
     ).update({"teacher_profile_id": profile_id})
     db.commit()
 
     return {"linked": True, "library_id": target.library_id}
+    
 # ============================================
 # CALCULATION AUDIT ENDPOINTS
 # ============================================
