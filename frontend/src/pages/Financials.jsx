@@ -2480,9 +2480,12 @@ const renderAuditBanner = () => {
 const renderCalculateBar = () => {
     if(!financialData) return null;
     const hasPayments = financialData.teacher_payments.length > 0;
+    const hasAnyWarnings = (lastAudit?.warnings || []).filter(
+      w => w.severity !== 'no_impact' && w.severity !== 'resolved'
+    ).length > 0;
     const canFinalize = hasPayments && !isStageWarningLocked && (
       !lastAudit ||
-      lastAudit.status === 'passed' ||
+      (lastAudit.status === 'passed' && !hasAnyWarnings) ||
       lastAudit.acknowledged
     );
 
