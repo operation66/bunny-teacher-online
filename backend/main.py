@@ -1916,7 +1916,9 @@ def get_audit_detail(
     audit = db.query(CalculationAudit).filter(CalculationAudit.id == audit_id).first()
     if not audit:
         raise HTTPException(status_code=404, detail="Audit not found")
-
+    
+    # Load section names for display
+    sections_cache = {s.id: s for s in db.query(Section).all()}
     # Build per-section formula steps from inputs_snapshot
     inputs = audit.inputs_snapshot or {}
     outputs = audit.outputs_snapshot or {}
@@ -1931,16 +1933,42 @@ def get_audit_detail(
             "total_revenue_egp": rev_data.get("total_revenue_egp", 0),
         }
 
-    # Build per-library output rows from outputs_snapshot
+    # Build per-payment output rows from outputs_snapshot
+    # Support both old format (library_id key) and new format (payment_id key)
     output_rows = []
-    for lib_id_str, data in outputs.items():
+    for key_str, data in outputs.items():
+        sec_id = data.get("section_id")
+        sec_obj = sections_cache.get(sec_id) if sec_id else None
         output_rows.append({
-            "library_id": lib_id_str,
-            "section_id": data.get("section_id"),
+            "library_id": data.get("library_id", key_str),
+            "library_name": data.get("library_name", ""),
+            "section_id": sec_id,
+            "section_name": sec_obj.name if sec_obj else (f"Section {sec_id}" if sec_id else "—"),
+            "section_code": sec_obj.code if sec_obj else None,
             "final_payment": data.get("final_payment", 0),
             "watch_time_percentage": data.get("watch_time_percentage", 0),
         })
     output_rows.sort(key=lambda x: x["final_payment"], reverse=True)
+
+    # Resolve acknowledging user's email
+    acknowledged_by_email = None
+    if audit.acknowledged_by_user_id:
+        ack_user = db.query(models.User).filter(
+            models.User.id == audit.acknowledged_by_user_id
+        ).first()
+        acknowledged_by_email = ack_user.email if ack_user else f"User #{audit.acknowledged_by_user_id}"
+
+    # Convert acknowledged_at to Egypt timezone (UTC+2 / UTC+3 DST)
+    egypt_tz = pytz.timezone('Africa/Cairo')
+    acknowledged_at_egypt = None
+    if audit.acknowledged_at:
+        ack_utc = audit.acknowledged_at if audit.acknowledged_at.tzinfo else pytz.utc.localize(audit.acknowledged_at)
+        acknowledged_at_egypt = ack_utc.astimezone(egypt_tz).strftime('%Y-%m-%d %I:%M %p Cairo')
+
+    created_at_egypt = None
+    if audit.created_at:
+        created_utc = audit.created_at if audit.created_at.tzinfo else pytz.utc.localize(audit.created_at)
+        created_at_egypt = created_utc.astimezone(egypt_tz).strftime('%Y-%m-%d %I:%M %p Cairo')
 
     return {
         "id": audit.id,
@@ -1955,8 +1983,9 @@ def get_audit_detail(
         "verification_status": audit.verification_status,
         "verification_delta": audit.verification_delta,
         "acknowledged": audit.acknowledged,
-        "acknowledged_at": audit.acknowledged_at.isoformat() if audit.acknowledged_at else None,
-        "created_at": audit.created_at.isoformat() if audit.created_at else None,
+        "acknowledged_by_email": acknowledged_by_email,
+        "acknowledged_at": acknowledged_at_egypt,
+        "created_at": created_at_egypt,
     }
 
 
@@ -3608,7 +3637,10 @@ async def calculate_payments(
             "period_months": period_months,
         }
         outputs_snapshot = {
-            str(p.library_id): {
+            str(p.id): {
+                "payment_id": p.id,
+                "library_id": p.library_id,
+                "library_name": p.library_name,
                 "section_id": p.section_id,
                 "final_payment": p.final_payment,
                 "watch_time_percentage": p.watch_time_percentage,
