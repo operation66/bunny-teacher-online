@@ -628,8 +628,9 @@ const Libraries = () => {
                     const { data } = await api.post('/historical-stats/cleanup-deleted/');
                     const protected_count = data.protected_library_ids?.length || 0;
                     const deleted_count = data.deleted_library_ids?.length || 0;
+                    const deleted_profiles = data.deleted_profile_rows || 0;
                     showMessage(
-                      `Cleanup done: ${deleted_count} libraries removed${protected_count > 0 ? `, ${protected_count} protected (have finalized payments — safe to ignore)` : ''}`,
+                      `Cleanup done: ${deleted_count} libraries removed${deleted_profiles > 0 ? `, ${deleted_profiles} orphaned teacher profiles deleted` : ''}${protected_count > 0 ? `, ${protected_count} protected (have finalized payments)` : ''}`,
                       'success'
                     );
                     statsFetchedRef.current = false;
