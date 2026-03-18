@@ -1547,7 +1547,7 @@ const renderAuditBanner = () => {
                               </span>
                               {isExpanded
                                 ? <ChevronUp className={`w-4 h-4 ${group.textHeader}`}/>
-                                : <ChevronDown className={`w-4 h-4 ${group.textHeader}`}`}/>}
+                                : <ChevronDown className={`w-4 h-4 ${group.textHeader}`}/>}
                             </button>
                             {isExpanded && (
                               <div className="divide-y">
