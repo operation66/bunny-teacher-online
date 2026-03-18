@@ -1922,7 +1922,9 @@ async def auto_link_teacher_profiles(
                     if a.teacher_profile_id == name_matched_profile.id:
                         already_linked += 1
                     else:
-                        a.teacher_profile_id = name_matched_profile.id
+                        db.query(TeacherAssignment).filter(
+                            TeacherAssignment.id == a.id
+                        ).update({"teacher_profile_id": name_matched_profile.id})
                         linked += 1
                 else:
                     unlinked_list.append(UnlinkedAssignment(
@@ -1948,7 +1950,9 @@ async def auto_link_teacher_profiles(
             if a.teacher_profile_id == profile.id:
                 already_linked += 1
             else:
-                a.teacher_profile_id = profile.id
+                db.query(TeacherAssignment).filter(
+                    TeacherAssignment.id == a.id
+                ).update({"teacher_profile_id": profile.id})
                 linked += 1
 
         db.commit()
