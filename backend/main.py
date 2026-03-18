@@ -832,6 +832,24 @@ async def cleanup_deleted_libraries(
                 {"ids": safe_to_delete}
             ).rowcount
 
+        # Delete teacher profiles that have NO remaining assignments
+        orphaned_profiles = db.execute(
+            text("""
+                SELECT tp.id FROM teacher_profiles tp
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM teacher_assignments ta
+                    WHERE ta.teacher_profile_id = tp.id
+                )
+            """)
+        ).scalars().all()
+
+        deleted_profiles = 0
+        if orphaned_profiles:
+            deleted_profiles = db.execute(
+                text("DELETE FROM teacher_profiles WHERE id = ANY(:ids)"),
+                {"ids": orphaned_profiles}
+            ).rowcount
+
         db.commit()
 
         from bunny_service import _libraries_cache
@@ -841,7 +859,8 @@ async def cleanup_deleted_libraries(
         logger.info(
             f"Cleanup: {len(deleted_ids)} stale libraries — "
             f"{deleted_stats} stats, {deleted_configs} configs, "
-            f"{deleted_payments} payments, {deleted_assignments} assignments deleted. "
+            f"{deleted_payments} payments, {deleted_assignments} assignments, "
+            f"{deleted_profiles} orphaned profiles deleted. "
             f"{len(protected)} libraries protected (have finalized payments)"
         )
 
@@ -854,6 +873,8 @@ async def cleanup_deleted_libraries(
             "deleted_config_rows": deleted_configs,
             "deleted_payment_rows": deleted_payments,
             "deleted_assignment_rows": deleted_assignments,
+            "deleted_profile_rows": deleted_profiles,
+            "orphaned_profile_ids": orphaned_profiles,
         }
 
     except Exception as e:
