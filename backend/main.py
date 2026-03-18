@@ -3386,9 +3386,21 @@ async def calculate_payments(
                     "library_name": a.library_name,
                 })
 
-        # Warning: zero watch time libraries not excluded
+        # Info: common subjects with null section_id (correctly handled as all-sections)
         for a in assignments:
-            if watch_time_map.get(a.library_id, 0) == 0:
+            subj = get_subject(a.subject_id)
+            if subj and subj.is_common and a.section_id is None:
+                audit_warnings.append({
+                    "code": "COMMON_SUBJECT_NULL_SECTION",
+                    "message": (
+                        f"Library '{a.library_name}' is a common subject ({subj.name}) "
+                        f"with no specific section — watch time will be split across all "
+                        f"sections by order ratio. This is correct behavior."
+                    ),
+                    "severity": "no_impact",
+                    "library_id": a.library_id,
+                    "library_name": a.library_name,
+                })
 
         # Warning: zero watch time libraries not excluded
         for a in assignments:
