@@ -1218,8 +1218,6 @@ const renderAuditBanner = () => {
                   {warnings.filter(w=>w.severity==='no_impact').length > 0 && (
                     <span className="text-gray-500 ml-2 font-normal text-xs">
                       + {warnings.filter(w=>w.severity==='no_impact').length} no impact
-                    </span>
-                  )}
                 </span>
               )}
                 </span>
