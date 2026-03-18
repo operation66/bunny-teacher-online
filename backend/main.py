@@ -760,9 +760,20 @@ async def cleanup_deleted_libraries(
         live_libraries = await get_bunny_libraries()
         live_ids = {lib.get("id") for lib in live_libraries if lib.get("id")}
 
-        db_library_ids = db.execute(
+        # Get ALL library IDs from ALL relevant tables
+        stats_ids = db.execute(
             text("SELECT DISTINCT library_id FROM library_historical_stats")
         ).scalars().all()
+
+        config_ids = db.execute(
+            text("SELECT DISTINCT library_id FROM library_configs")
+        ).scalars().all()
+
+        assignment_ids = db.execute(
+            text("SELECT DISTINCT library_id FROM teacher_assignments")
+        ).scalars().all()
+
+        db_library_ids = list(set(list(stats_ids) + list(config_ids) + list(assignment_ids)))
 
         deleted_ids = [lid for lid in db_library_ids if lid not in live_ids]
 
