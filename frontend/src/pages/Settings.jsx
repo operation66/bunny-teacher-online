@@ -1195,7 +1195,7 @@ const handleManualLink = async (libraryId) => {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Users className="w-5 h-5 text-blue-600"/>
-              Linked Teacher Profiles ({teacherProfilesList.length})
+              Linked Teacher Profiles ({teacherProfilesWithLibs.length || teacherProfilesList.length})
               {profilesTableCollapsed && teacherProfilesList.length > 0 && (
                 <span className="text-xs font-normal text-gray-400 ml-1">(click to expand)</span>
               )}
@@ -1297,7 +1297,7 @@ const handleManualLink = async (libraryId) => {
                             </tr>
                           );
                         })}
-                      {teacherProfilesList.filter(p => {
+                      {teacherProfilesWithLibs.filter(p => {
                         if (!teacherSearch) return true;
                         const q = teacherSearch.toLowerCase();
                         return p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q);
