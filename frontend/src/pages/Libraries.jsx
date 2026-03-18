@@ -614,11 +614,30 @@ const Libraries = () => {
 
               <Button
                 onClick={() => { statsFetchedRef.current = false; fetchLibrariesWithHistory(showOnlyWithStats, true); }}
-                disabled={loading || statsLoading}
+                disabled={loading}
                 className="group h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700"
                 title="Force refresh from Bunny API (bypasses cache)">
-                <RefreshCw className={`w-4 h-4 transition-transform duration-300 ${(loading || statsLoading) ? 'animate-spin' : 'group-hover:rotate-90'}`} />
+                <RefreshCw className={`w-4 h-4 transition-transform duration-300 ${loading ? 'animate-spin' : 'group-hover:rotate-90'}`} />
                 Refresh (Live)
+              </Button>
+
+              <Button
+                onClick={async () => {
+                  if (!window.confirm('This will remove deleted Bunny libraries from your database including their stats and assignments. Continue?')) return;
+                  try {
+                    const { data } = await api.post('/historical-stats/cleanup-deleted/');
+                    showMessage(`Cleanup done: ${data.deleted_library_ids?.length || 0} stale libraries removed`, 'success');
+                    statsFetchedRef.current = false;
+                    fetchLibrariesWithHistory(showOnlyWithStats, true);
+                  } catch (e) {
+                    showMessage('Cleanup failed: ' + (e.response?.data?.detail || e.message), 'error');
+                  }
+                }}
+                disabled={loading}
+                className="h-[38px] px-[18px] rounded-[8px] text-[14px] font-medium inline-flex items-center gap-2 bg-orange-500 text-white hover:bg-orange-600"
+                title="Remove deleted Bunny libraries from database">
+                <X className="w-4 h-4" />
+                Sync & Cleanup
               </Button>
             </div>
           </div>
