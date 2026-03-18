@@ -695,6 +695,9 @@ const Settings = () => {
   const [subjectChangeWarning, setSubjectChangeWarning] = useState(() => {
     try { const s = localStorage.getItem('subject_change_warning'); return s ? JSON.parse(s) : null; } catch { return null; }
   });
+  const [assignmentSearch, setAssignmentSearch] = useState('');
+  const [teacherSearch, setTeacherSearch] = useState('');
+  const [addProfileCollapsed, setAddProfileCollapsed] = useState(true);
   const [filterStage, setFilterStage] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterSubject, setFilterSubject] = useState('');
@@ -952,9 +955,15 @@ const handleManualLink = async (libraryId) => {
       }
     }
     if (filterSubject && a.subject_id !== Number(filterSubject)) return false;
+    if (assignmentSearch) {
+      const q = assignmentSearch.toLowerCase();
+      const nameMatch = (a.library_name || '').toLowerCase().includes(q);
+      const idMatch = String(a.library_id).includes(q);
+      const teacherMatch = (a.teacher_profile_name || a.library_name || '').toLowerCase().includes(q);
+      if (!nameMatch && !idMatch && !teacherMatch) return false;
+    }
     return true;
   });
-
   // Dynamic filter options
   const sectionOptions = filterStage
     ? sections.filter(s => s.stage_id === Number(filterStage))
@@ -1117,8 +1126,6 @@ const handleManualLink = async (libraryId) => {
               {autoLinking ? 'Running…' : 'Auto-Link Teachers'}
             </Button>
           </div>
-
-          {/* Result summary */}
           {autoLinkResult && (
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
               {[
@@ -1138,28 +1145,40 @@ const handleManualLink = async (libraryId) => {
         </CardContent>
       </Card>
 
-      {/* Add Teacher Profile manually */}
+      {/* Add Teacher Profile manually — collapsed by default */}
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Plus className="w-5 h-5 text-green-600"/>
-            Add Teacher Profile Manually
-          </CardTitle>
+        <CardHeader
+          className="cursor-pointer"
+          onClick={() => setAddProfileCollapsed(prev => !prev)}>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-green-600"/>
+              Add Teacher Profile Manually
+              {addProfileCollapsed && (
+                <span className="text-xs font-normal text-gray-400 ml-1">(click to expand)</span>
+              )}
+            </CardTitle>
+            {addProfileCollapsed
+              ? <ChevronDown className="w-4 h-4 text-gray-400"/>
+              : <ChevronUp className="w-4 h-4 text-gray-400"/>}
+          </div>
         </CardHeader>
-        <CardContent>
-          <p className="text-xs text-gray-500 mb-3">
-            Use this when a library has no P-code in its name. Create the profile here, then manually link it below.
-          </p>
-          <AddTeacherProfileForm
-            onCreated={async () => {
-              await loadUnlinkedAssignments();
-              flash('Teacher profile created.');
-            }}
-          />
-        </CardContent>
+        {!addProfileCollapsed && (
+          <CardContent>
+            <p className="text-xs text-gray-500 mb-3">
+              Use this when a library has no P-code in its name. Create the profile here, then manually link it below.
+            </p>
+            <AddTeacherProfileForm
+              onCreated={async () => {
+                await loadUnlinkedAssignments();
+                flash('Teacher profile created.');
+              }}
+            />
+          </CardContent>
+        )}
       </Card>
 
-      {/* Existing Profiles table */}
+      {/* Existing Profiles table — with search + libraries column */}
       <Card>
         <CardHeader
           className="cursor-pointer"
@@ -1185,44 +1204,98 @@ const handleManualLink = async (libraryId) => {
         </CardHeader>
         {!profilesTableCollapsed && (
           <CardContent>
+            {/* Search bar */}
+            <div className="relative mb-3">
+              <CheckCircle className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"/>
+              <Input
+                placeholder="Search teachers by name or P-code…"
+                value={teacherSearch}
+                onChange={e => setTeacherSearch(e.target.value)}
+                className="pl-9 h-9 text-sm"/>
+              {teacherSearch && (
+                <button onClick={() => setTeacherSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <X className="w-4 h-4"/>
+                </button>
+              )}
+            </div>
             {teacherProfilesList.length === 0 ? (
               <p className="text-sm text-gray-400 italic text-center py-6">
                 No profiles yet. Run Auto-Link or add one manually above.
               </p>
             ) : (
               <div className="rounded-lg border overflow-hidden">
-                <div className="overflow-y-auto max-h-72">
+                <div className="overflow-y-auto max-h-96">
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b sticky top-0 z-10">
                       <tr>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">P-Code</th>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Name</th>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Notes</th>
-                        <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600">Actions</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600 w-24">P-Code</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600 w-40">Name</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-gray-600">Linked Libraries</th>
+                        <th className="text-right px-4 py-2 text-xs font-semibold text-gray-600 w-16">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {teacherProfilesList.map(p => (
-                        <tr key={p.id} className="border-b hover:bg-gray-50">
-                          <td className="px-4 py-2 font-mono font-bold text-blue-700">{p.code}</td>
-                          <td className="px-4 py-2 font-medium text-gray-800">{p.name}</td>
-                          <td className="px-4 py-2 text-xs text-gray-400">{p.notes || '—'}</td>
-                          <td className="px-4 py-2 text-right">
-                            <Button size="sm" variant="outline"
-                              onClick={async () => {
-                                if (!window.confirm(`Delete profile ${p.code} - ${p.name}? This will unlink all their assignments.`)) return;
-                                try {
-                                  await financialApi.deleteTeacherProfile(p.id);
-                                  flash(`Profile ${p.code} deleted.`);
-                                  await loadUnlinkedAssignments();
-                                } catch (e) { flash('Delete failed: ' + (e.response?.data?.detail || e.message), 'error'); }
-                              }}
-                              className="text-red-500 hover:text-red-700 h-7 px-2">
-                              <Trash2 className="w-3.5 h-3.5"/>
-                            </Button>
+                      {teacherProfilesList
+                        .filter(p => {
+                          if (!teacherSearch) return true;
+                          const q = teacherSearch.toLowerCase();
+                          return p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q);
+                        })
+                        .map(p => {
+                          // Find all assignments linked to this profile
+                          const linkedLibraries = assignments.filter(a => a.teacher_profile_id === p.id);
+                          // Deduplicate by library_id
+                          const uniqueLibs = Array.from(
+                            new Map(linkedLibraries.map(a => [a.library_id, a])).values()
+                          );
+                          return (
+                            <tr key={p.id} className="border-b hover:bg-gray-50 align-top">
+                              <td className="px-4 py-2 font-mono font-bold text-blue-700">{p.code}</td>
+                              <td className="px-4 py-2 font-medium text-gray-800">{p.name}</td>
+                              <td className="px-4 py-2">
+                                {uniqueLibs.length === 0 ? (
+                                  <span className="text-xs text-gray-400 italic">No libraries linked</span>
+                                ) : (
+                                  <div className="flex flex-wrap gap-1">
+                                    {uniqueLibs.map(a => (
+                                      <span key={a.library_id}
+                                        className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded border border-gray-200"
+                                        title={`ID: ${a.library_id}`}>
+                                        {a.library_name}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-2 text-right">
+                                <Button size="sm" variant="outline"
+                                  onClick={async () => {
+                                    if (!window.confirm(`Delete profile ${p.code} - ${p.name}? This will unlink all their assignments.`)) return;
+                                    try {
+                                      await financialApi.deleteTeacherProfile(p.id);
+                                      flash(`Profile ${p.code} deleted.`);
+                                      await loadUnlinkedAssignments();
+                                    } catch (e) { flash('Delete failed: ' + (e.response?.data?.detail || e.message), 'error'); }
+                                  }}
+                                  className="text-red-500 hover:text-red-700 h-7 px-2">
+                                  <Trash2 className="w-3.5 h-3.5"/>
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      {teacherProfilesList.filter(p => {
+                        if (!teacherSearch) return true;
+                        const q = teacherSearch.toLowerCase();
+                        return p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q);
+                      }).length === 0 && (
+                        <tr>
+                          <td colSpan="4" className="text-center py-6 text-gray-400 text-sm">
+                            No teachers match "{teacherSearch}"
                           </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1231,7 +1304,7 @@ const handleManualLink = async (libraryId) => {
           </CardContent>
         )}
       </Card>
-      
+
       {/* Needs Manual Linking card */}
       <Card>
         <CardHeader>
@@ -1245,11 +1318,7 @@ const handleManualLink = async (libraryId) => {
                 </span>
               )}
             </CardTitle>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={loadUnlinkedAssignments}
-              disabled={loadingUnlinked}
+            <Button size="sm" variant="outline" onClick={loadUnlinkedAssignments} disabled={loadingUnlinked}
               className="text-xs flex items-center gap-1">
               <RefreshCw className={`w-3 h-3 ${loadingUnlinked ? 'animate-spin' : ''}`}/>
               Refresh
@@ -1282,9 +1351,7 @@ const handleManualLink = async (libraryId) => {
                       <td className="px-4 py-2 font-mono text-gray-500 text-xs">{a.library_id}</td>
                       <td className="px-4 py-2">
                         <span className={`text-xs px-2 py-0.5 rounded font-medium
-                          ${a.reason === 'no_p_code'
-                            ? 'bg-orange-100 text-orange-700'
-                            : 'bg-yellow-100 text-yellow-700'}`}>
+                          ${a.reason === 'no_p_code' ? 'bg-orange-100 text-orange-700' : 'bg-yellow-100 text-yellow-700'}`}>
                           {a.reason === 'no_p_code' ? 'No P-code in name' : 'P-code not in DB'}
                         </span>
                       </td>
@@ -1299,9 +1366,7 @@ const handleManualLink = async (libraryId) => {
                               <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
                             ))}
                           </select>
-                          <Button
-                            size="sm"
-                            onClick={() => handleManualLink(a.library_id)}
+                          <Button size="sm" onClick={() => handleManualLink(a.library_id)}
                             disabled={!linkProfileId[a.library_id]}
                             className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 h-auto flex items-center gap-1">
                             <Link className="w-3 h-3"/>Link
@@ -1316,7 +1381,6 @@ const handleManualLink = async (libraryId) => {
           )}
         </CardContent>
       </Card>
-
     </div>
   );
   
@@ -1586,10 +1650,8 @@ const handleManualLink = async (libraryId) => {
               <Button size="sm" onClick={reopenPendingEditor} className="bg-orange-600 hover:bg-orange-700 text-white flex-shrink-0">
                 <AlertTriangle className="w-3.5 h-3.5 mr-1.5"/>Continue Review
               </Button>
-              <button onClick={() => {
-                localStorage.removeItem(PENDING_REVIEW_KEY);
-                setPendingLibs([]);
-              }} className="text-orange-400 hover:text-orange-600 flex-shrink-0">
+              <button onClick={() => { localStorage.removeItem(PENDING_REVIEW_KEY); setPendingLibs([]); }}
+                className="text-orange-400 hover:text-orange-600 flex-shrink-0">
                 <X className="w-4 h-4"/>
               </button>
             </div>
@@ -1597,9 +1659,25 @@ const handleManualLink = async (libraryId) => {
         </CardContent>
       </Card>
 
-      {/* Filters */}
+      {/* Search + Filters */}
       <Card>
-        <CardContent className="pt-4 pb-3">
+        <CardContent className="pt-4 pb-3 space-y-3">
+          {/* Search bar */}
+          <div className="relative">
+            <CheckCircle className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"/>
+            <Input
+              placeholder="Search by library name, ID, or teacher…"
+              value={assignmentSearch}
+              onChange={e => setAssignmentSearch(e.target.value)}
+              className="pl-9 h-9 text-sm"/>
+            {assignmentSearch && (
+              <button onClick={() => setAssignmentSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                <X className="w-4 h-4"/>
+              </button>
+            )}
+          </div>
+          {/* Filters */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Stage</label>
@@ -1657,79 +1735,81 @@ const handleManualLink = async (libraryId) => {
         </CardContent>
       </Card>
 
-      {/* Table — grouped, no duplicate rows */}
+      {/* Table — nested scrollable */}
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-gray-50 border-b">
-                  <th className="px-4 py-3 w-8">
-                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
-                      className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
-                  </th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600 w-72">Library</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600 w-24">Stage</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600 w-36">Section</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Subject</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600 w-20">Tax %</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-600 w-24">Revenue %</th>
-                  <th className="text-center px-4 py-3 font-medium text-gray-600 w-28">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredGrouped.map(g => {
-                  const key = groupKey(g);
-                  const isSelected = selectedIds.has(key);
-                  return (
-                    <tr key={key} onClick={() => toggleSelect(key)}
-                      className={`border-b cursor-pointer transition-colors
-                        ${isSelected ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'}`}>
-                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                        <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(key)}
-                          className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
-                      </td>
-                      <td className="px-4 py-2">
-                        <p className="font-medium text-gray-800 text-sm leading-tight">{g.library_name}</p>
-                        <p className="text-xs text-gray-400">ID: {g.library_id}</p>
-                      </td>
-                      <td className="px-4 py-2">
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono whitespace-nowrap">{g.stage_name}</span>
-                      </td>
-                      <td className="px-4 py-2">{sectionCell(g)}</td>
-                      <td className="px-4 py-2">
-                        <span className="font-medium text-gray-800 text-sm">{g.subject_name}</span>
-                        {g.subject_is_common && <span className="ml-1 text-xs text-purple-500">(common)</span>}
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono text-gray-700 text-sm whitespace-nowrap">{pct(g.tax_rate)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-gray-700 text-sm whitespace-nowrap">{pct(g.revenue_percentage)}</td>
-                      <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-1">
-                          <Button size="sm" variant="outline" onClick={() => setEditTarget(g)} className="hover:bg-blue-50 hover:border-blue-300 h-7 px-2">
-                            <Edit2 className="w-3.5 h-3.5 mr-1"/>Edit
-                          </Button>
-                          <Button size="sm" variant="outline" onClick={() => { g._rowIds.forEach(id => deleteAssignment(id)); }}
-                            className="text-red-500 hover:text-red-700 hover:border-red-300 h-7 px-2">
-                            <Trash2 className="w-3.5 h-3.5"/>
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filteredGrouped.length === 0 && (
-                  <tr><td colSpan="8" className="text-center py-12 text-gray-500">
-                    No assignments match the current filters.
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
+            <div className="overflow-y-auto" style={{ maxHeight: '60vh' }}>
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-gray-50 border-b">
+                    <th className="px-4 py-3 w-8">
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                        className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
+                    </th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600 w-72">Library</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600 w-24">Stage</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600 w-36">Section</th>
+                    <th className="text-left px-4 py-3 font-medium text-gray-600">Subject</th>
+                    <th className="text-right px-4 py-3 font-medium text-gray-600 w-20">Tax %</th>
+                    <th className="text-right px-4 py-3 font-medium text-gray-600 w-24">Revenue %</th>
+                    <th className="text-center px-4 py-3 font-medium text-gray-600 w-28">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredGrouped.map(g => {
+                    const key = groupKey(g);
+                    const isSelected = selectedIds.has(key);
+                    return (
+                      <tr key={key} onClick={() => toggleSelect(key)}
+                        className={`border-b cursor-pointer transition-colors
+                          ${isSelected ? 'bg-blue-50 hover:bg-blue-100' : 'hover:bg-gray-50'}`}>
+                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                          <input type="checkbox" checked={isSelected} onChange={() => toggleSelect(key)}
+                            className="w-4 h-4 rounded text-blue-600 cursor-pointer"/>
+                        </td>
+                        <td className="px-4 py-2">
+                          <p className="font-medium text-gray-800 text-sm leading-tight">{g.library_name}</p>
+                          <p className="text-xs text-gray-400">ID: {g.library_id}</p>
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono whitespace-nowrap">{g.stage_name}</span>
+                        </td>
+                        <td className="px-4 py-2">{sectionCell(g)}</td>
+                        <td className="px-4 py-2">
+                          <span className="font-medium text-gray-800 text-sm">{g.subject_name}</span>
+                          {g.subject_is_common && <span className="ml-1 text-xs text-purple-500">(common)</span>}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono text-gray-700 text-sm whitespace-nowrap">{pct(g.tax_rate)}</td>
+                        <td className="px-4 py-2 text-right font-mono text-gray-700 text-sm whitespace-nowrap">{pct(g.revenue_percentage)}</td>
+                        <td className="px-4 py-2" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1">
+                            <Button size="sm" variant="outline" onClick={() => setEditTarget(g)} className="hover:bg-blue-50 hover:border-blue-300 h-7 px-2">
+                              <Edit2 className="w-3.5 h-3.5 mr-1"/>Edit
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => { g._rowIds.forEach(id => deleteAssignment(id)); }}
+                              className="text-red-500 hover:text-red-700 hover:border-red-300 h-7 px-2">
+                              <Trash2 className="w-3.5 h-3.5"/>
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredGrouped.length === 0 && (
+                    <tr><td colSpan="8" className="text-center py-12 text-gray-500">
+                      {assignmentSearch ? `No assignments match "${assignmentSearch}"` : 'No assignments match the current filters.'}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </CardContent>
       </Card>
     </div>
   );
-
+  
   // ── Final render ──────────────────────────────────────────────────────────
   const TABS = [
     { key: 'stages',      label: `Stages (${stages.length})`,           Icon: GraduationCap },
