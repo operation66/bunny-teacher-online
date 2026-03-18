@@ -1245,7 +1245,7 @@ const handleManualLink = async (libraryId) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {teacherProfilesList
+                      {teacherProfilesWithLibs
                         .filter(p => {
                           if (!teacherSearch) return true;
                           const q = teacherSearch.toLowerCase();
