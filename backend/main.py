@@ -750,7 +750,106 @@ async def get_cache_status(current_user: models.User = Depends(get_current_user)
         "ttl_seconds": _libraries_cache["ttl_seconds"],
         "expires_in_seconds": max(0, _libraries_cache["ttl_seconds"] - age) if age is not None else None
     }
+    
+@app.post("/historical-stats/cleanup-deleted/")
+async def cleanup_deleted_libraries(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    try:
+        live_libraries = await get_bunny_libraries()
+        live_ids = {lib.get("id") for lib in live_libraries if lib.get("id")}
 
+        db_library_ids = db.execute(
+            text("SELECT DISTINCT library_id FROM library_historical_stats")
+        ).scalars().all()
+
+        deleted_ids = [lid for lid in db_library_ids if lid not in live_ids]
+
+        if not deleted_ids:
+            return {"message": "No stale libraries found", "deleted_count": 0, "deleted_library_ids": []}
+
+        # Find which deleted libraries have finalized payments
+        # Do NOT delete payments or assignments for finalized periods
+        finalized_library_ids = db.execute(
+            text("""
+                SELECT DISTINCT ta.library_id
+                FROM teacher_assignments ta
+                JOIN teacher_payments tp ON tp.assignment_id = ta.id
+                JOIN payment_finalizations pf ON (
+                    pf.period_id = tp.period_id
+                    AND pf.stage_id = tp.stage_id
+                    AND pf.section_id = tp.section_id
+                )
+                WHERE ta.library_id = ANY(:ids)
+            """),
+            {"ids": deleted_ids}
+        ).scalars().all()
+
+        finalized_set = set(finalized_library_ids)
+        safe_to_delete = [lid for lid in deleted_ids if lid not in finalized_set]
+        protected = [lid for lid in deleted_ids if lid in finalized_set]
+
+        # Delete stats and configs for ALL deleted libraries (safe — these are just analytics)
+        deleted_stats = db.execute(
+            text("DELETE FROM library_historical_stats WHERE library_id = ANY(:ids)"),
+            {"ids": deleted_ids}
+        ).rowcount
+
+        deleted_configs = db.execute(
+            text("DELETE FROM library_configs WHERE library_id = ANY(:ids)"),
+            {"ids": deleted_ids}
+        ).rowcount
+
+        # Delete payments and assignments ONLY for libraries with NO finalized periods
+        deleted_payments = 0
+        deleted_assignments = 0
+
+        if safe_to_delete:
+            deleted_payments = db.execute(
+                text("""
+                    DELETE FROM teacher_payments
+                    WHERE assignment_id IN (
+                        SELECT id FROM teacher_assignments WHERE library_id = ANY(:ids)
+                    )
+                """),
+                {"ids": safe_to_delete}
+            ).rowcount
+
+            deleted_assignments = db.execute(
+                text("DELETE FROM teacher_assignments WHERE library_id = ANY(:ids)"),
+                {"ids": safe_to_delete}
+            ).rowcount
+
+        db.commit()
+
+        from bunny_service import _libraries_cache
+        _libraries_cache["data"] = None
+        _libraries_cache["fetched_at"] = None
+
+        logger.info(
+            f"Cleanup: {len(deleted_ids)} stale libraries — "
+            f"{deleted_stats} stats, {deleted_configs} configs, "
+            f"{deleted_payments} payments, {deleted_assignments} assignments deleted. "
+            f"{len(protected)} libraries protected (have finalized payments)"
+        )
+
+        return {
+            "message": f"Cleaned up {len(deleted_ids)} deleted libraries",
+            "deleted_library_ids": safe_to_delete,
+            "protected_library_ids": protected,
+            "protected_reason": "These libraries have finalized payment records and were not removed from assignments",
+            "deleted_stats_rows": deleted_stats,
+            "deleted_config_rows": deleted_configs,
+            "deleted_payment_rows": deleted_payments,
+            "deleted_assignment_rows": deleted_assignments,
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Cleanup error: {e}")
+        raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
+        
 # ============================================
 # ROOT
 # ============================================
