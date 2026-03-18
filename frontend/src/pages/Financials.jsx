@@ -159,6 +159,10 @@ const Financials = () => {
   const [auditDetail, setAuditDetail]         = useState(null);
   const [loadingAuditDetail, setLoadingAuditDetail] = useState(false);
   const [auditHistory, setAuditHistory]       = useState([]);
+  const [expandedWarningGroups, setExpandedWarningGroups] = useState({
+    critical: true, warning: true, finalization_only: true,
+    info: true, no_impact: false, resolved: false,
+  });
 
 // ── NEW: Finalization modal ───────────────────────────────────────────────
   const [showFinalizationModal, setShowFinalizationModal] = useState(false);
@@ -1518,88 +1522,72 @@ const renderAuditBanner = () => {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {warnings.map((w, i) => (
-                        <div key={i} className={`rounded-lg border px-4 py-3 ${
-                          w.severity === 'critical'
-                            ? 'bg-red-50 border-red-200'
-                            : w.severity === 'finalization_only'
-                              ? 'bg-purple-50 border-purple-200'
-                              : w.severity === 'info'
-                                ? 'bg-blue-50 border-blue-200'
-                                : w.severity === 'no_impact'
-                                  ? 'bg-gray-50 border-gray-200'
-                                  : w.severity === 'resolved'
-                                    ? 'bg-green-50 border-green-200'
-                                    : 'bg-yellow-50 border-yellow-200'
-                        }`}>
-                          <div className="flex items-start gap-2">
-                            {w.severity === 'no_impact'
-                              ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400"/>
-                              : w.severity === 'info'
-                                ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500"/>
-                                : w.severity === 'resolved'
-                                  ? <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500"/>
-                                  : w.severity === 'finalization_only'
-                                    ? <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-purple-500"/>
-                                    : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
-                                        w.severity === 'critical' ? 'text-red-500' : 'text-yellow-500'
-                                      }`}/>
-                            }
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                                <code className={`text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
-                                  w.severity === 'critical'
-                                    ? 'bg-red-100 text-red-700'
-                                    : w.severity === 'finalization_only'
-                                      ? 'bg-purple-100 text-purple-700'
-                                      : w.severity === 'no_impact'
-                                        ? 'bg-gray-100 text-gray-500'
-                                        : w.severity === 'info'
-                                          ? 'bg-blue-100 text-blue-700'
-                                          : 'bg-yellow-100 text-yellow-700'
-                                }`}>{w.code}</code>
-                                <span className={`text-xs font-semibold uppercase ${
-                                  w.severity === 'critical'
-                                    ? 'text-red-600'
-                                    : w.severity === 'finalization_only'
-                                      ? 'text-purple-600'
-                                      : w.severity === 'no_impact'
-                                        ? 'text-gray-400'
-                                        : w.severity === 'info'
-                                          ? 'text-blue-600'
-                                          : w.severity === 'resolved'
-                                            ? 'text-green-600'
-                                            : 'text-yellow-600'
-                                }`}>
-                                  {w.severity === 'finalization_only'
-                                    ? 'affects finalization only'
-                                    : w.severity === 'no_impact'
-                                      ? 'no impact'
-                                      : w.severity}
+                      {[
+                        { key: 'critical',         label: 'Critical Issues',          bgHeader: 'bg-red-100 border-red-300',    bgItem: 'bg-red-50 border-red-200',    textHeader: 'text-red-800',    icon: '🚨' },
+                        { key: 'warning',           label: 'Warnings',                 bgHeader: 'bg-yellow-100 border-yellow-300', bgItem: 'bg-yellow-50 border-yellow-200', textHeader: 'text-yellow-800', icon: '⚠️' },
+                        { key: 'finalization_only', label: 'Affects Finalization Only', bgHeader: 'bg-purple-100 border-purple-300', bgItem: 'bg-purple-50 border-purple-200', textHeader: 'text-purple-800', icon: '🔗' },
+                        { key: 'info',              label: 'Info',                     bgHeader: 'bg-blue-100 border-blue-300',  bgItem: 'bg-blue-50 border-blue-200',  textHeader: 'text-blue-800',  icon: 'ℹ️' },
+                        { key: 'no_impact',         label: 'No Impact',                bgHeader: 'bg-gray-100 border-gray-300',  bgItem: 'bg-gray-50 border-gray-200',  textHeader: 'text-gray-600',  icon: '✓'  },
+                        { key: 'resolved',          label: 'Resolved / Acknowledged',  bgHeader: 'bg-green-100 border-green-300', bgItem: 'bg-green-50 border-green-200', textHeader: 'text-green-800', icon: '✅' },
+                      ].map(group => {
+                        const groupWarnings = warnings.filter(w => w.severity === group.key);
+                        if (groupWarnings.length === 0) return null;
+                        const isExpanded = expandedWarningGroups[group.key] !== false;
+                        return (
+                          <div key={group.key} className={`border rounded-lg overflow-hidden`}>
+                            <button
+                              onClick={() => setExpandedWarningGroups(prev => ({...prev, [group.key]: !isExpanded}))}
+                              className={`w-full flex items-center justify-between px-4 py-2.5 border-b ${group.bgHeader}`}>
+                              <span className={`flex items-center gap-2 text-sm font-semibold ${group.textHeader}`}>
+                                <span>{group.icon}</span>
+                                {group.label}
+                                <span className="bg-white/70 text-xs font-bold px-2 py-0.5 rounded-full">
+                                  {groupWarnings.length} check{groupWarnings.length !== 1 ? 's' : ''}
                                 </span>
+                              </span>
+                              {isExpanded
+                                ? <ChevronUp className={`w-4 h-4 ${group.textHeader}`}/>
+                                : <ChevronDown className={`w-4 h-4 ${group.textHeader}`}`}/>}
+                            </button>
+                            {isExpanded && (
+                              <div className="divide-y">
+                                {groupWarnings.map((w, i) => (
+                                  <div key={i} className={`px-4 py-3 ${group.bgItem}`}>
+                                    <div className="flex items-start gap-2">
+                                      {group.key === 'no_impact' || group.key === 'resolved' || group.key === 'info'
+                                        ? <CheckCircle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                                            group.key === 'no_impact' ? 'text-gray-400' :
+                                            group.key === 'resolved' ? 'text-green-500' : 'text-blue-500'
+                                          }`}/>
+                                        : <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                                            group.key === 'critical' ? 'text-red-500' :
+                                            group.key === 'finalization_only' ? 'text-purple-500' : 'text-yellow-500'
+                                          }`}/>
+                                      }
+                                      <div className="flex-1 min-w-0">
+                                        <code className={`text-xs font-mono px-1.5 py-0.5 rounded font-bold ${
+                                          group.key === 'critical' ? 'bg-red-100 text-red-700' :
+                                          group.key === 'finalization_only' ? 'bg-purple-100 text-purple-700' :
+                                          group.key === 'no_impact' ? 'bg-gray-100 text-gray-500' :
+                                          group.key === 'info' ? 'bg-blue-100 text-blue-700' :
+                                          group.key === 'resolved' ? 'bg-green-100 text-green-700' :
+                                          'bg-yellow-100 text-yellow-700'
+                                        }`}>{w.code}</code>
+                                        <p className={`text-sm mt-1 ${group.textHeader}`}>{w.message}</p>
+                                        {w.library_id && (
+                                          <div className="mt-1 text-xs text-gray-500 font-mono">
+                                            Library ID: {w.library_id} · {w.library_name}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                              <p className={`text-sm ${
-                                w.severity === 'critical'
-                                  ? 'text-red-800'
-                                  : w.severity === 'finalization_only'
-                                    ? 'text-purple-800'
-                                    : w.severity === 'no_impact'
-                                      ? 'text-gray-500'
-                                      : w.severity === 'info'
-                                        ? 'text-blue-800'
-                                        : w.severity === 'resolved'
-                                          ? 'text-green-800'
-                                          : 'text-yellow-800'
-                              }`}>{w.message}</p>
-                              {w.library_id && (
-                                <div className="mt-1 text-xs text-gray-500 font-mono">
-                                  Library ID: {w.library_id} · {w.library_name}
-                                </div>
-                              )}
-                            </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1616,7 +1604,7 @@ const renderAuditBanner = () => {
                         <table className="w-full text-xs">
                           <thead className="bg-gray-50 sticky top-0 border-b">
                             <tr>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-600">Library ID</th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-600">Library</th>
                               <th className="text-left px-3 py-2 font-semibold text-gray-600">Section</th>
                               <th className="text-right px-3 py-2 font-semibold text-gray-600">Watch %</th>
                               <th className="text-right px-3 py-2 font-semibold text-gray-600">Payment (EGP)</th>
@@ -1625,8 +1613,22 @@ const renderAuditBanner = () => {
                           <tbody>
                             {outputRows.map((row, i) => (
                               <tr key={i} className="border-b hover:bg-gray-50">
-                                <td className="px-3 py-1.5 font-mono text-gray-700">{row.library_id}</td>
-                                <td className="px-3 py-1.5 text-gray-600">Sec {row.section_id}</td>
+                                <td className="px-3 py-1.5">
+                                  <div className="font-mono text-gray-700 text-xs">{row.library_name || row.library_id}</div>
+                                  <div className="text-gray-400 text-xs">ID: {row.library_id}</div>
+                                </td>
+                                <td className="px-3 py-1.5">
+                                  {row.section_code ? (
+                                    <span className={`text-xs px-2 py-0.5 rounded font-mono font-bold
+                                      ${(row.section_code||'').toUpperCase().includes('GEN')
+                                        ? 'bg-green-100 text-green-700'
+                                        : 'bg-blue-100 text-blue-700'}`}>
+                                      {row.section_code}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-400 text-xs">{row.section_name || '—'}</span>
+                                  )}
+                                </td>
                                 <td className="px-3 py-1.5 text-right font-mono">
                                   {((row.watch_time_percentage || 0) * 100).toFixed(2)}%
                                 </td>
@@ -1734,14 +1736,14 @@ const renderAuditBanner = () => {
                     <CheckCircle className="w-4 h-4 text-green-500"/>
                     <div>
                       <span className="font-semibold">Warnings acknowledged — finalization is unlocked.</span>
-                      {audit.acknowledged_at && (
-                        <div className="text-xs text-green-600 mt-0.5">
-                          Acknowledged on {new Date(audit.acknowledged_at).toLocaleString()}
-                          {audit.acknowledged_by_user_id && (
-                            <span className="ml-1">(User ID: {audit.acknowledged_by_user_id})</span>
-                          )}
-                        </div>
-                      )}
+                      <div className="text-xs text-green-600 mt-0.5 space-y-0.5">
+                        {audit.acknowledged_at && (
+                          <div>🕐 {audit.acknowledged_at}</div>
+                        )}
+                        {audit.acknowledged_by_email && (
+                          <div>👤 {audit.acknowledged_by_email}</div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
