@@ -50,12 +50,16 @@ const financialApi = {
     const response = await api.post('/subjects/', subjectData);
     return response.data;
   },
-  ddeleteSubject: async (subjectId) => {
+  deleteSubject: async (subjectId) => {
     const response = await api.delete(`/subjects/${subjectId}`);
     return response.data;
   },
   updateSubject: async (subjectId, subjectData) => {
     const response = await api.put(`/subjects/${subjectId}`, subjectData);
+    return response.data;
+  },
+  getTeacherProfilesWithLibraries: async () => {
+    const response = await api.get('/teacher-profiles/with-libraries');
     return response.data;
   },
 
