@@ -1244,7 +1244,10 @@ const handleManualLink = async (libraryId) => {
                         })
                         .map(p => {
                           // Find all assignments linked to this profile
-                          const linkedLibraries = assignments.filter(a => a.teacher_profile_id === p.id);
+                          const linkedLibraries = assignments.filter(a => 
+                            a.teacher_profile_id != null && 
+                            Number(a.teacher_profile_id) === Number(p.id)
+                          );
                           // Deduplicate by library_id
                           const uniqueLibs = Array.from(
                             new Map(linkedLibraries.map(a => [a.library_id, a])).values()
