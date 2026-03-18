@@ -714,6 +714,7 @@ const Settings = () => {
   const [unlinkedAssignments, setUnlinkedAssignments] = useState([]);
   const [loadingUnlinked, setLoadingUnlinked]         = useState(false);
   const [teacherProfilesList, setTeacherProfilesList] = useState([]);
+  const [teacherProfilesWithLibs, setTeacherProfilesWithLibs] = useState([]);
   const [linkProfileId, setLinkProfileId]             = useState({}); // { library_id: profile_id }
 
   // ── Teacher Profile Auto-Link handlers ──────────────────────────────────
@@ -721,11 +722,11 @@ const Settings = () => {
 const loadUnlinkedAssignments = useCallback(async () => {
     setLoadingUnlinked(true);
     try {
-      const [unlinked, profiles] = await Promise.all([
+      const [unlinked, profiles, profilesWithLibs] = await Promise.all([
         financialApi.getUnlinkedAssignments().catch(() => []),
         financialApi.getTeacherProfiles().catch(() => []),
+        financialApi.getTeacherProfilesWithLibraries().catch(() => []),
       ]);
-      // Deduplicate by library_id (safety net in case backend returns duplicates)
       const seen = new Set();
       const deduped = (unlinked || []).filter(a => {
         if (seen.has(a.library_id)) return false;
@@ -734,10 +735,12 @@ const loadUnlinkedAssignments = useCallback(async () => {
       });
       setUnlinkedAssignments(deduped);
       setTeacherProfilesList(profiles || []);
+      setTeacherProfilesWithLibs(profilesWithLibs || []);
     } catch (e) {
       console.error('Error loading unlinked assignments:', e);
       setTeacherProfilesList([]);
       setUnlinkedAssignments([]);
+      setTeacherProfilesWithLibs([]);
     } finally { setLoadingUnlinked(false); }
   }, []);
   
