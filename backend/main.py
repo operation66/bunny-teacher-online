@@ -1930,7 +1930,36 @@ def get_audit_detail(
             "total_orders": rev_data.get("total_orders", 0),
             "total_revenue_egp": rev_data.get("total_revenue_egp", 0),
         }
-        
+
+    # Build per-library output rows from outputs_snapshot
+    output_rows = []
+    for lib_id_str, data in outputs.items():
+        output_rows.append({
+            "library_id": lib_id_str,
+            "section_id": data.get("section_id"),
+            "final_payment": data.get("final_payment", 0),
+            "watch_time_percentage": data.get("watch_time_percentage", 0),
+        })
+    output_rows.sort(key=lambda x: x["final_payment"], reverse=True)
+
+    return {
+        "id": audit.id,
+        "period_id": audit.period_id,
+        "stage_id": audit.stage_id,
+        "status": audit.status,
+        "warnings": audit.warnings or [],
+        "inputs_snapshot": inputs,
+        "outputs_snapshot": outputs,
+        "formula_steps": formula_steps,
+        "output_rows": output_rows,
+        "verification_status": audit.verification_status,
+        "verification_delta": audit.verification_delta,
+        "acknowledged": audit.acknowledged,
+        "acknowledged_at": audit.acknowledged_at.isoformat() if audit.acknowledged_at else None,
+        "created_at": audit.created_at.isoformat() if audit.created_at else None,
+    }
+
+
 @app.get("/calculation-audits/{period_id}/{stage_id}", response_model=List[CalculationAuditSummary])
 def get_calculation_audits(
     period_id: int,
@@ -1995,36 +2024,6 @@ def acknowledge_audit(
         "acknowledged_by": current_user.email,
         "acknowledged_at": audit.acknowledged_at.isoformat(),
     }
-
-
-    # Build per-library output rows from outputs_snapshot
-    output_rows = []
-    for lib_id_str, data in outputs.items():
-        output_rows.append({
-            "library_id": lib_id_str,
-            "section_id": data.get("section_id"),
-            "final_payment": data.get("final_payment", 0),
-            "watch_time_percentage": data.get("watch_time_percentage", 0),
-        })
-    output_rows.sort(key=lambda x: x["final_payment"], reverse=True)
-
-    return {
-        "id": audit.id,
-        "period_id": audit.period_id,
-        "stage_id": audit.stage_id,
-        "status": audit.status,
-        "warnings": audit.warnings or [],
-        "inputs_snapshot": inputs,
-        "outputs_snapshot": outputs,
-        "formula_steps": formula_steps,
-        "output_rows": output_rows,
-        "verification_status": audit.verification_status,
-        "verification_delta": audit.verification_delta,
-        "acknowledged": audit.acknowledged,
-        "acknowledged_at": audit.acknowledged_at.isoformat() if audit.acknowledged_at else None,
-        "created_at": audit.created_at.isoformat() if audit.created_at else None,
-    }
-
 
 # ============================================
 # FINALIZATION ENDPOINTS
