@@ -191,7 +191,28 @@ const Libraries = () => {
     const { data } = await api.get('/historical-stats/libraries/', {
       params: { with_stats_only: withStatsOnly }
     });
-    const statsData = data || [];
+    let statsData = data || [];
+
+    // Filter out libraries that no longer exist in Bunny
+    try {
+      const { data: liveData } = await api.get('/bunny-libraries/');
+      const liveIds = new Set(
+        (Array.isArray(liveData) ? liveData : [])
+          .map(l => l.id ?? l.library_id)
+          .filter(id => id != null)
+      );
+      if (liveIds.size > 0) {
+        const before = statsData.length;
+        statsData = statsData.filter(lib => {
+          const id = lib.library_id ?? lib.id;
+          return liveIds.has(id);
+        });
+        console.log(`[StatsCache] Filtered ${before - statsData.length} deleted libraries`);
+      }
+    } catch (_) {
+      console.warn('[StatsCache] Could not filter against live Bunny IDs');
+    }
+
     _statsCache.set(statsData);
     return statsData;
   };
@@ -242,6 +263,7 @@ const Libraries = () => {
     } catch (error) {
       console.error('Error fetching libraries:', error);
       setLoading(false);
+      setStatsLoading(false); // ← ensure button is never stuck disabled
       // Fallback: try to get something from historical stats
       try {
         const statsData = await loadHistoricalStats(withStatsOnly);
