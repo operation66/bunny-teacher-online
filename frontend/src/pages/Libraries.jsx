@@ -626,7 +626,12 @@ const Libraries = () => {
                   if (!window.confirm('This will remove deleted Bunny libraries from your database including their stats and assignments. Continue?')) return;
                   try {
                     const { data } = await api.post('/historical-stats/cleanup-deleted/');
-                    showMessage(`Cleanup done: ${data.deleted_library_ids?.length || 0} stale libraries removed`, 'success');
+                    const protected_count = data.protected_library_ids?.length || 0;
+                    const deleted_count = data.deleted_library_ids?.length || 0;
+                    showMessage(
+                      `Cleanup done: ${deleted_count} libraries removed${protected_count > 0 ? `, ${protected_count} protected (have finalized payments — safe to ignore)` : ''}`,
+                      'success'
+                    );
                     statsFetchedRef.current = false;
                     fetchLibrariesWithHistory(showOnlyWithStats, true);
                   } catch (e) {
