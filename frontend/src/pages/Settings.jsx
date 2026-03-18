@@ -804,6 +804,12 @@ const handleManualLink = async (libraryId) => {
     loadUnlinkedAssignments();
   }, [loadAll, loadPendingFromStorage, loadUnlinkedAssignments]);
 
+  useEffect(() => {
+    if (activeTab === 'teachers') {
+      loadAll();
+      loadUnlinkedAssignments();
+    }
+  }, [activeTab]);
   // ── Stage CRUD ────────────────────────────────────────────────────────────
   const createStage = async (e) => {
     e.preventDefault();
