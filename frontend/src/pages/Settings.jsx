@@ -1252,15 +1252,7 @@ const handleManualLink = async (libraryId) => {
                           return p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q);
                         })
                         .map(p => {
-                          // Find all assignments linked to this profile
-                          const linkedLibraries = assignments.filter(a => 
-                            a.teacher_profile_id != null && 
-                            Number(a.teacher_profile_id) === Number(p.id)
-                          );
-                          // Deduplicate by library_id
-                          const uniqueLibs = Array.from(
-                            new Map(linkedLibraries.map(a => [a.library_id, a])).values()
-                          );
+                          const uniqueLibs = p.libraries || [];
                           return (
                             <tr key={p.id} className="border-b hover:bg-gray-50 align-top">
                               <td className="px-4 py-2 font-mono font-bold text-blue-700">{p.code}</td>
